@@ -1,0 +1,30 @@
+# dbt connection profiles. Is file me SECRET NAHI hai - token/host env vars se
+# aate hain (.env file, jo git me nahi jaati).
+# KYA NAHI KARNA: token yahan paste karke commit mat karna.
+insurance_lakehouse:
+  # Databricks job (dbt_task) ke andar DATABRICKS_RUNTIME_VERSION set hota hai -> databricks target
+  target: "{{ env_var('DBT_TARGET', 'databricks' if env_var('DATABRICKS_RUNTIME_VERSION', '') else 'local') }}"
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../data/warehouse/insurance.duckdb') }}"
+      schema: insurance_gold
+      # 1 thread: DuckDB ek file = ek writer. Parallel threads silver source ko ek
+      # saath load karke "write-write conflict" dete hain. (Databricks par 4 threads.)
+      threads: 1
+      # delta plugin: silver Delta tables (Spark ne likhi) ko deltalake (delta-rs)
+      # se padhta hai - DuckDB extension download ki zaroorat nahi (offline chalta hai)
+      plugins:
+        - module: delta
+
+    databricks:
+      type: databricks
+      catalog: "{{ env_var('UC_CATALOG', 'workspace') }}"
+      schema: insurance_gold
+      # Laptop/Airflow se: .env ke DATABRICKS_HOST/TOKEN/HTTP_PATH.
+      # Databricks job (dbt_task) ke andar: Databricks khud DBT_* / DATABRICKS_* env deta hai.
+      host: "{{ env_var('DATABRICKS_HOST', env_var('DBT_HOST', 'not-set')) | replace('https://', '') | replace('/', '') }}"
+      # SQL Warehouses -> Serverless Starter Warehouse -> Connection details -> HTTP path
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH', env_var('DBT_HTTP_PATH', 'not-set')) }}"
+      token: "{{ env_var('DATABRICKS_TOKEN', env_var('DBT_ACCESS_TOKEN', 'not-set')) }}"
+      threads: 4

@@ -1,0 +1,24 @@
+{
+  // VS Code: "Dev Containers: Reopen in Container" -> docker-compose ka `dev` service.
+  // Java 17, PySpark, dbt, Databricks CLI sab ready. Windows par Spark ki winutils
+  // problem khatam (sab Linux container me chalta hai).
+  "name": "insurance-lakehouse",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "dev",
+  "runServices": ["postgres", "airflow-init", "airflow-apiserver", "airflow-scheduler", "airflow-dag-processor", "dev"],
+  "workspaceFolder": "/opt/project",
+  "shutdownAction": "none",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venvs/pipeline/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests", "-p", "no:logging"]
+      },
+      "extensions": [
+        "ms-python.python", "charliermarshall.ruff", "innoverio.vscode-dbt-power-user",
+        "databricks.databricks", "redhat.vscode-yaml", "ms-azuretools.vscode-docker"
+      ]
+    }
+  }
+}

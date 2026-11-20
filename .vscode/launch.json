@@ -1,0 +1,15 @@
+{
+  // Breakpoint ke saath debug (local .venv me, ya Dev Container ke andar)
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "Ingest sample -> landing", "type": "debugpy", "request": "launch", "module": "insurance_lakehouse.main",
+      "args": ["ingest", "--ingest-date", "2026-01-01"], "cwd": "${workspaceFolder}", "envFile": "${workspaceFolder}/.env", "console": "integratedTerminal" },
+    { "name": "Run layer (pick)", "type": "debugpy", "request": "launch", "module": "insurance_lakehouse.main",
+      "args": ["run", "--layer", "${input:layer}"], "cwd": "${workspaceFolder}", "envFile": "${workspaceFolder}/.env", "console": "integratedTerminal" },
+    { "name": "Reconcile", "type": "debugpy", "request": "launch", "module": "insurance_lakehouse.main",
+      "args": ["reconcile"], "cwd": "${workspaceFolder}", "envFile": "${workspaceFolder}/.env", "console": "integratedTerminal" },
+    { "name": "Show results", "type": "debugpy", "request": "launch", "module": "insurance_lakehouse.main",
+      "args": ["show"], "cwd": "${workspaceFolder}", "envFile": "${workspaceFolder}/.env", "console": "integratedTerminal" }
+  ],
+  "inputs": [ { "id": "layer", "type": "pickString", "description": "Layer", "options": ["bronze", "silver", "gold", "all"] } ]
+}

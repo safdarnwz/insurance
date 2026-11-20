@@ -1,0 +1,28 @@
+version: 2
+
+# Silver layer (Spark ne banaya) = dbt ka SOURCE.
+#  - databricks target: Unity Catalog tables  <catalog>.insurance_silver.*
+#  - local target     : Delta folders, dbt-duckdb `delta` plugin se DuckDB me load
+#    (meta.* keys sirf dbt-duckdb padhta hai; Databricks inhe ignore karta hai)
+sources:
+  - name: silver
+    description: "Cleaned + validated data (Spark silver layer). Gold isi se banta hai."
+    schema: "{{ env_var('DBT_SILVER_SCHEMA', 'insurance_silver') }}"
+    meta:
+      plugin: delta
+      materialization: table   # DuckDB file me persist (view registered-arrow par toot jaata)
+    tables:
+      - name: member_charges
+        description: "1 row = 1 member x 1 policy year ka medical charge"
+        meta:
+          delta_table_path: "{{ env_var('SILVER_PATH', '/not-set') }}/member_charges"
+        columns:
+          - name: record_id
+            data_tests: [unique, not_null]
+      - name: region_master
+        description: "Region reference data (SCD1 latest). effective_date = jab value badli."
+        meta:
+          delta_table_path: "{{ env_var('SILVER_PATH', '/not-set') }}/region_master"
+        columns:
+          - name: region
+            data_tests: [unique, not_null]

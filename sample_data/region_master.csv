@@ -1,0 +1,5 @@
+region,region_name,country,regional_office,risk_zone
+northeast,North East,USA,Boston,Medium
+northwest,North West,USA,Seattle,Low
+southeast,South East,USA,Atlanta,High
+southwest,South West,USA,Phoenix,Medium

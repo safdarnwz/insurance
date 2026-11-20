@@ -1,0 +1,147 @@
+# =============================================================================
+# Local stack:  docker compose up -d --build
+#   Airflow UI  -> http://localhost:8080   (login: airflow / airflow)
+#   dbt docs    -> docker compose --profile docs up dbt-docs  -> http://localhost:8081
+#   CLI shell   -> docker compose exec dev bash
+#
+# Services: postgres (Airflow metadata DB), airflow-init (one-time), api-server,
+# scheduler, dag-processor, dev (VS Code / CLI ke liye).
+# LocalExecutor: tasks scheduler container me hi chalte hain - laptop ke liye
+# kaafi. Production me CeleryExecutor/KubernetesExecutor.
+#
+# Docker Desktop ko kam se kam 6 GB RAM do (Spark + Airflow).
+# =============================================================================
+x-airflow-common: &airflow-common
+  build: .
+  image: insurance-lakehouse:latest
+  env_file:
+    - path: .env
+      required: false
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/project/airflow/dags
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    # Sab Airflow components ka same secret hona chahiye (task <-> api-server auth)
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-local-dev-only-change-me}
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # Databricks connection .env ke DATABRICKS_HOST / DATABRICKS_TOKEN se
+    # (sirf PIPELINE_ENV=databricks me use hota hai)
+    AIRFLOW_CONN_DATABRICKS_DEFAULT: '{"conn_type": "databricks", "host": "${DATABRICKS_HOST:-https://not-set}", "password": "${DATABRICKS_TOKEN:-not-set}"}'
+    PIPELINE_ENV: ${PIPELINE_ENV:-local}
+    # Databricks CLI ka "direct" deploy engine: Terraform download nahi karta.
+    # (Terraform engine purane HashiCorp signing key ki wajah se "openpgp: key expired" deta hai.)
+    DATABRICKS_BUNDLE_ENGINE: direct
+    SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-2g}
+  volumes:
+    - ./:/opt/project              # code + data + dbt live mount (VS Code edits turant)
+    - airflow-logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-depends
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    # root: sirf folders ki ownership set karne ke liye, fir DB migrate + admin user
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        mkdir -p /opt/project/data /opt/project/dbt/target /opt/project/dbt/logs
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/project/data /opt/project/dbt/target /opt/project/dbt/logs
+        # Airflow "airflow" user ke ~/.local me install hai; root ko wo path batao
+        export PYTHONUSERBASE=/home/airflow/.local
+        airflow db migrate
+        airflow users create --username airflow --password airflow \
+          --firstname Data --lastname Engineer --role Admin --email admin@example.com || true
+        echo "Airflow init done"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+  # VS Code "Attach to Running Container" / CLI ke liye (Java, Spark, dbt,
+  # databricks CLI sab ready):  docker compose exec dev insurance-pipeline show
+  dev:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command: ["-c", "sleep infinity"]
+    environment:
+      <<: *airflow-env
+      PATH: /opt/venvs/pipeline/bin:/opt/java/openjdk/bin:/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  dbt-docs:
+    <<: *airflow-common
+    profiles: ["docs"]
+    entrypoint: /bin/bash
+    command: ["-c", "/opt/venvs/pipeline/bin/insurance-pipeline dbt docs serve --port 8081 --host 0.0.0.0 --no-browser"]
+    ports:
+      - "8081:8081"
+    depends_on: []
+
+volumes:
+  postgres-db:
+  airflow-logs:

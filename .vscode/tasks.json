@@ -1,0 +1,29 @@
+{
+  // Terminal -> Run Task.  Sab Docker par chalta hai (laptop par sirf Docker Desktop chahiye).
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "docker: build + start stack", "type": "shell", "command": "docker compose up -d --build", "problemMatcher": [] },
+    { "label": "docker: stop stack", "type": "shell", "command": "docker compose down", "problemMatcher": [] },
+    { "label": "docker: logs (scheduler)", "type": "shell", "command": "docker compose logs -f airflow-scheduler", "problemMatcher": [] },
+    { "label": "airflow: trigger initial load (2026)", "type": "shell",
+      "command": "docker compose exec airflow-scheduler airflow dags unpause insurance_elt && docker compose exec airflow-scheduler airflow dags trigger insurance_elt --conf '{\"source\":\"sample\",\"ingest_date\":\"2026-01-01\"}'", "problemMatcher": [] },
+    { "label": "airflow: trigger next year (2027, dirty data + SCD2)", "type": "shell",
+      "command": "docker compose exec airflow-scheduler airflow dags trigger insurance_elt --conf '{\"source\":\"synthetic\",\"ingest_date\":\"2027-01-01\"}'", "problemMatcher": [] },
+    { "label": "pipeline: show results", "type": "shell", "command": "docker compose exec dev insurance-pipeline show", "problemMatcher": [] },
+    { "label": "pipeline: run all (without Airflow)", "type": "shell",
+      "command": "docker compose exec dev bash -c 'insurance-pipeline setup && insurance-pipeline ingest --ingest-date 2026-01-01 && insurance-pipeline run --layer bronze && insurance-pipeline reconcile && insurance-pipeline run --layer silver && insurance-pipeline dq-gate && insurance-pipeline run --layer gold'", "problemMatcher": [] },
+    { "label": "pipeline: reset local data", "type": "shell", "command": "docker compose exec dev insurance-pipeline reset --yes", "problemMatcher": [] },
+    { "label": "test: pytest (in Docker)", "type": "shell", "command": "docker compose exec dev pytest -q -p no:logging", "group": "test", "problemMatcher": [] },
+    { "label": "dbt: docs (http://localhost:8081)", "type": "shell", "command": "docker compose exec dev insurance-pipeline dbt docs generate && docker compose --profile docs up -d dbt-docs", "problemMatcher": [] },
+    { "label": "databricks: setup (schemas, volumes, tags)", "type": "shell", "command": "docker compose exec dev insurance-pipeline --env databricks setup", "problemMatcher": [] },
+    { "label": "databricks: bundle deploy", "type": "shell", "command": "docker compose exec dev databricks bundle deploy --var warehouse_id=${input:warehouse}", "problemMatcher": [] },
+    { "label": "databricks: upload sample to inbox", "type": "shell", "command": "docker compose exec dev insurance-pipeline --env databricks upload-inbox --sample", "problemMatcher": [] },
+    { "label": "databricks: upload next-year batch to inbox", "type": "shell", "command": "docker compose exec dev insurance-pipeline --env databricks upload-inbox --synthetic-batch 2", "problemMatcher": [] },
+    { "label": "databricks: run medallion job", "type": "shell", "command": "docker compose exec dev databricks bundle run insurance_medallion --var warehouse_id=${input:warehouse}", "problemMatcher": [] },
+    { "label": "databricks: run lakeflow pipeline", "type": "shell", "command": "docker compose exec dev databricks bundle run insurance_lakeflow --var warehouse_id=${input:warehouse}", "problemMatcher": [] }
+  
+  ],
+  "inputs": [
+    { "id": "warehouse", "type": "promptString", "description": "Databricks SQL warehouse id (SQL Warehouses -> Serverless Starter Warehouse)" }
+  ]
+}

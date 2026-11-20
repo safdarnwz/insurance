@@ -1,0 +1,22 @@
+# Ek hi file: laptop venv, Docker image aur CI - teeno me same versions.
+# KYUN exact pins: "mere laptop par chalta tha" problem khatam. Upgrade = soch samajh ke PR.
+#
+# Spark (local mode). Databricks par ye install NAHI hote - wahan runtime ka Spark hai.
+pyspark==3.5.3
+delta-spark==3.2.1
+pyyaml>=6.0
+# dbt (gold layer) - local target DuckDB, cloud target Databricks
+dbt-core==1.10.13
+dbt-duckdb==1.9.6
+dbt-databricks==1.10.14
+duckdb==1.4.2
+deltalake[pyarrow]==1.2.1
+# Databricks Free Edition: Volume upload (Files API)
+databricks-sdk==0.63.0
+# Optional: Kaggle API se download (--source kaggle)
+kaggle>=1.6
+# Dev
+pytest>=8
+ruff>=0.5
+# Databricks bundle wheel build
+build>=1.2

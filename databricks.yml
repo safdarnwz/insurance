@@ -5,6 +5,7 @@
 #
 #   inbox (UC Volume, drop zone)
 #     -> setup -> ingest -> bronze -> reconcile -> silver -> dq_gate -> gold (dbt)
+#     -> serving_sync (Lakebase Postgres) -> quality_report (notebook)
 #
 # KYUN bundle (Infrastructure-as-Code): job UI me click karke banana = koi
 # version control nahi. Bundle se job YAML me hai -> git review, CI/CD deploy.
@@ -185,6 +186,18 @@ resources:
             parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}",
                          "--warehouse-id", "${var.warehouse_id}", "run", "--layer", "gold"]
 
+        # SERVING: gold -> Lakebase Postgres (synced tables) - apps/APIs ke liye
+        - task_key: serving_sync
+          description: "Lakebase: gold (serve_member_risk, agg_region_risk) -> Postgres synced tables"
+          depends_on: [{ task_key: gold_dbt }]
+          environment_key: spark
+          max_retries: 1
+          min_retry_interval_millis: 30000
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "serving-sync"]
+
         # Databricks-native Lakeflow Declarative Pipeline (DLT) - same landing data,
         # alag schema. Parallel branch: iska fail main gold ko block nahi karta.
         - task_key: lakeflow_pipeline
@@ -196,7 +209,7 @@ resources:
         # Notebook task: run ke end me quality/KPI report (Runs page par output dikhta hai)
         - task_key: quality_report
           description: "Notebook: pipeline health + DQ + KPIs"
-          depends_on: [{ task_key: gold_dbt }]
+          depends_on: [{ task_key: serving_sync }]
           notebook_task:
             notebook_path: ./notebooks/insurance_analysis.py
 

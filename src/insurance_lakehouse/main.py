@@ -14,6 +14,7 @@ CLI entry point  (`pip install -e .` ke baad `insurance-pipeline` command).
   insurance-pipeline reconcile                               # manifest rows == bronze rows?
   insurance-pipeline dq-gate                                 # reject% > limit -> fail
   insurance-pipeline dbt docs generate                       # koi bhi dbt command
+  insurance-pipeline --env databricks serving-sync           # gold -> Lakebase Postgres
   insurance-pipeline show                                    # audit + gold tables
   insurance-pipeline --env databricks ...                    # Databricks Free Edition
 
@@ -131,6 +132,14 @@ def _cmd_dbt(cfg, args):
     run_dbt(cfg, args.dbt_args)
 
 
+def _cmd_serving_sync(cfg, args):
+    if cfg.is_local:
+        raise SystemExit("Lakebase serving sirf --env databricks me (local me DuckDB gold hi serving hai)")
+    from .serving.lakebase import sync
+
+    log.info("SERVING result: %s", sync(cfg))
+
+
 def _cmd_maintenance(cfg, args):
     from .utils.maintenance import run_maintenance
 
@@ -223,6 +232,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("dbt", help="dbt command chalao, e.g. `dbt docs generate`")
     s.add_argument("dbt_args", nargs=argparse.REMAINDER)
 
+    sub.add_parser("serving-sync", help="Gold -> Lakebase Postgres (synced tables) [databricks]")
+
     s = sub.add_parser("maintenance", help="OPTIMIZE + VACUUM")
     s.add_argument("--retain-hours", type=int, default=168)
 
@@ -244,7 +255,7 @@ def main(argv: list[str] | None = None) -> None:
         "setup": _cmd_setup, "ingest": _cmd_ingest, "upload-inbox": _cmd_upload_inbox,
         "generate-large": _cmd_generate_large,
         "run": _cmd_run, "reconcile": _cmd_reconcile, "dq-gate": _cmd_dq_gate, "dbt": _cmd_dbt,
-        "maintenance": _cmd_maintenance, "show": _cmd_show, "reset": _cmd_reset,
+        "serving-sync": _cmd_serving_sync, "maintenance": _cmd_maintenance, "show": _cmd_show, "reset": _cmd_reset,
     }[args.command](cfg, args)
 
 

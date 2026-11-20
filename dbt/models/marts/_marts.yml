@@ -56,3 +56,12 @@ models:
     columns:
       - name: region
         data_tests: [unique, not_null]
+
+  - name: serve_member_risk
+    description: "Serving mart: 1 row per member record, denormalized for app lookups. Synced to Lakebase Postgres."
+    columns:
+      - name: record_id
+        description: "Primary key in Lakebase (synced table)"
+        data_tests: [unique, not_null]
+      - name: risk_segment
+        data_tests: [not_null]

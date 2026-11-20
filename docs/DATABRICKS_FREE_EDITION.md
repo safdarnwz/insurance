@@ -15,9 +15,9 @@ aur poora pipeline Databricks ke andar chalta hai. Free Edition ke saare main fe
  │   artifacts/   <- code wheel (versioned)                                                       │
  │                                                                                                │
  │  LAKEFLOW JOB  "insurance-medallion-pipeline"  (serverless, file-arrival trigger)              │
- │   setup ─► ingest ─► bronze ─► reconcile ─► silver ─► dq_gate ─► gold_dbt ─► quality_report     │
- │             │        (Auto     (manifest   (DQ +      (circuit  (dbt on SQL   (notebook)        │
- │             │         Loader)   = bronze)   quarantine) breaker) warehouse)                    │
+ │   setup ─► ingest ─► bronze ─► reconcile ─► silver ─► dq_gate ─► gold_dbt ─► serving_sync ─►    │
+ │             │        (Auto     (manifest   (DQ +      (circuit  (dbt on SQL  (Lakebase)  report  │
+ │             │         Loader)   = bronze)   quarantine) breaker) warehouse)              (nb)    │
  │             └──────► lakeflow_pipeline  (Lakeflow Declarative Pipeline, expectations)          │
  │                                                                                                │
  │  DELTA TABLES (UC managed)                                                                     │
@@ -28,7 +28,10 @@ aur poora pipeline Databricks ke andar chalta hai. Free Edition ke saare main fe
  │   insurance_lakeflow bronze/silver/quarantine + materialized view (DLT version)                │
  │   insurance_audit    pipeline_runs, silver_batch_stats                                         │
  │                                                                                                │
- │  CONSUME:  AI/BI Dashboard "Insurance Lakehouse - Overview"  |  SQL Editor  |  Notebook        │
+ │  SERVING (Lakebase Postgres, project insurance-serving):                                       │
+ │   gold.serve_member_risk, gold.agg_region_risk ──synced tables──► Postgres (ms lookups for apps)│
+ │                                                                                                │
+ │  CONSUME:  AI/BI Dashboard  |  SQL Editor  |  Notebook  |  Apps/APIs via Postgres (psycopg)    │
  └─────────────────────────────────────────────────────────────────────────────────────────────┘
         ▲ deploy (Asset Bundle)                      ▲ trigger (optional)
    VS Code / Docker `dev` container              Airflow (Docker) - enterprise orchestrator
@@ -45,6 +48,9 @@ aur poora pipeline Databricks ke andar chalta hai. Free Edition ke saare main fe
 | **Job Runs** | Har run ka task graph, duration, logs, retries; file-arrival trigger | Jobs & Pipelines → *Job runs* |
 | **Notebooks** | `notebooks/insurance_analysis.py` — job ka last task (report) + interactive analysis | Workspace → `.bundle/insurance_lakehouse/dev/files/notebooks` |
 | **SQL Warehouses / SQL Editor** | dbt gold isi par chalta hai (Serverless Starter Warehouse); ad-hoc queries | SQL Editor: `select * from workspace.insurance_gold.agg_region_risk` |
+| **Compute → Serverless** | Saare job tasks, Lakeflow pipeline aur notebook "Default Automated / Interactive Compute" (serverless) par. Classic clusters Free Edition me allowed nahi | Compute → Serverless; job run → task → Compute |
+| **Compute → SQL warehouses** | Serverless Starter Warehouse: dbt gold, dashboard, setup DDL | Compute → SQL warehouses |
+| **Lakebase Postgres** | Project `insurance-serving` (Postgres 17): synced tables `serve_member_risk` (1532 rows), `agg_region_risk` | Lakebase Postgres → Projects; Catalog → `insurance_serving` |
 | **Dashboards** (AI/BI) | "Insurance Lakehouse - Overview": KPIs, region, smoker loading, BMI x smoker, risk segment, yearly | Dashboards |
 
 ## 3. Do pipelines — same data, same answer
@@ -75,7 +81,25 @@ Databricks-only team, kam code, built-in DQ monitoring → Lakeflow. Interview m
   secrets `DATABRICKS_HOST`, `DATABRICKS_TOKEN`; variable `DATABRICKS_WAREHOUSE_ID`.
 * Production standard: PAT ki jagah **service principal (OAuth M2M)**; Free Edition me account console nahi, isliye PAT.
 
-## 5. Kyun aise (industry standard decisions)
+## 5. Serving layer — Lakebase (managed Postgres)
+
+```
+gold Delta (analytics)  ──synced table (SNAPSHOT, managed pipeline)──►  Lakebase Postgres  ──►  app / API (psycopg, JDBC)
+```
+
+| Sawaal | Jawab |
+|---|---|
+| Kyun? | SQL warehouse analytics (bade scans) ke liye hai; app ko "ek member ka risk" milliseconds me chahiye → Postgres (OLTP). |
+| Kya sync hota hai? | `serve_member_risk` (dbt serving mart: 1 row/member, denormalized, PK `record_id`) aur `agg_region_risk` (PK `region`). |
+| Kab? | Job ka `serving_sync` task, gold (dbt) ke baad — Postgres hamesha latest gold dikhata hai. |
+| Mode | `SNAPSHOT` (dbt table har run rebuild hoti hai). Badi tables: Change Data Feed + `TRIGGERED`/`CONTINUOUS`. |
+| App kaise connect kare? | `scripts/lakebase_lookup.py`: Databricks se short-lived OAuth token (`/api/2.0/postgres/credentials`) = Postgres password. Koi static password nahi. |
+| Code | `src/insurance_lakehouse/serving/lakebase.py` (idempotent: project + synced tables ensure, phir refresh) |
+
+**Kya nahi karna:** Postgres me haath se likhna (synced table read-only copy hai, source of truth = gold);
+app ko SQL warehouse / silver par point karna; Postgres password app me hardcode karna.
+
+## 6. Kyun aise (industry standard decisions)
 
 | Decision | Kyun | Kya NAHI karna |
 |---|---|---|
@@ -90,7 +114,7 @@ Databricks-only team, kam code, built-in DQ monitoring → Lakeflow. Interview m
 | **Auth inside job = runtime identity** | dbt ko token Databricks SDK runtime se milta hai | Job parameters / code me PAT |
 | **Asset Bundle** (`databricks.yml`) | Jobs, pipeline, dashboard sab code me, git review | UI me click-ops |
 
-## 6. Setup (aapke laptop / Docker se) — ek baar
+## 7. Setup (aapke laptop / Docker se) — ek baar
 
 1. **Token** (Google/Gmail SSO users bhi): profile icon → *Settings* → *Developer* → *Access tokens* → *Generate new token*.
 2. **SQL warehouse id**: *SQL Warehouses* → *Serverless Starter Warehouse* → URL / *Connection details* (HTTP path ka last part).
@@ -113,7 +137,7 @@ Databricks-only team, kam code, built-in DQ monitoring → Lakeflow. Interview m
 5. Agla saal / naya data: `insurance-pipeline upload-inbox --synthetic-batch 2` (ya apni CSV UI se `inbox/kaggle/member_charges/` me) → job run.
 6. Automatic chahiye: Job → *Triggers* → file arrival **Unpause** (ya Airflow DAG unpause — dono nahi).
 
-## 7. Free Edition limitations jo code me handle ki hain
+## 8. Free Edition limitations jo code me handle ki hain
 
 | Limitation / issue | Handling |
 |---|---|
@@ -127,9 +151,12 @@ Databricks-only team, kam code, built-in DQ monitoring → Lakeflow. Interview m
 | Spark Connect: streaming progress None | Bronze row count Delta table se |
 | foreachBatch alag process | `batch_df.sparkSession`, stats Delta table me |
 | ANSI mode ON | `try_cast`, `nullif` |
+| Classic clusters (all-purpose / job clusters) nahi bana sakte | Sab serverless compute par; paid workspace me `job_clusters` wala alag target bana sakte ho |
+| Lakebase auto-suspend timeout badal nahi sakte ("cannot be modified for this workspace tier") | Default rakha; endpoint 1 CU, scale-to-zero UI default |
+| `dbt-databricks` purane `databricks-sdk` par pinned (SDK ki `postgres` service nahi) | Lakebase calls raw REST `/api/2.0/postgres/...` se |
 | Daily compute quota | `availableNow` (stream chal ke ruk jaata hai) |
 
-## 8. Kya NAHI karna
+## 9. Kya NAHI karna
 
 * Token sirf `.env` me. Chat, code, notebook, screenshot me kabhi nahi. Leak ho to turant revoke.
 * File-arrival trigger **aur** Airflow schedule dono ON mat karo – double runs.

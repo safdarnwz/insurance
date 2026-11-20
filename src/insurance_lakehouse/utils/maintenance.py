@@ -32,7 +32,7 @@ ZORDER = {
 def setup_statements(cfg: PipelineConfig) -> list[str]:
     cat = cfg.catalog
     stmts = [f"CREATE SCHEMA IF NOT EXISTS {cat}.{cfg.schemas[layer]}"
-             for layer in ("landing", "bronze", "silver", "gold", "audit")]
+             for layer in ("landing", "bronze", "silver", "gold", "audit", "serving")]
     # Volume = UC governed folder: landing files + streaming checkpoints
     stmts += [f"CREATE VOLUME IF NOT EXISTS {cat}.{cfg.schemas['landing']}.inbox",
               f"CREATE VOLUME IF NOT EXISTS {cat}.{cfg.schemas['landing']}.files",
@@ -49,6 +49,7 @@ SCHEMA_DOCS = {
     "silver": "Cleaned, typed, validated (DQ), deduplicated. Quarantine table for rejects",
     "gold": "Business star schema + KPIs built by dbt. Use this for BI / dashboards",
     "audit": "Pipeline run audit + batch statistics",
+    "serving": "Lakebase synced tables: gold copies in Postgres for app/API lookups (read-only)",
 }
 
 

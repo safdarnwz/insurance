@@ -49,6 +49,7 @@ schemas:
   silver: insurance_silver
   gold: insurance_gold
   audit: insurance_audit
+  serving: insurance_serving
 
 tables:
   bronze:
@@ -61,6 +62,21 @@ tables:
   audit:
     pipeline_runs: pipeline_runs
     silver_batch_stats: silver_batch_stats
+
+# -----------------------------------------------------------------------------
+# SERVING LAYER: Lakebase (managed Postgres) - gold tables apps/APIs ke liye
+# (sirf databricks env). Reverse ETL: Delta (analytics) -> Postgres (OLTP lookups)
+# -----------------------------------------------------------------------------
+serving:
+  project_id: insurance-serving          # Lakebase project
+  branch: production
+  postgres_database: databricks_postgres
+  uc_schema: insurance_serving           # synced tables UC me yahan register hoti hain
+  synced_tables:
+    - source: serve_member_risk          # gold table (dbt)
+      primary_key: [record_id]
+    - source: agg_region_risk
+      primary_key: [region]
 
 quality_gate:
   # Silver me itne % se zyada rows reject hui to pipeline ROK do (gold mat banao).

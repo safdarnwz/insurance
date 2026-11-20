@@ -125,11 +125,13 @@ aur poora pipeline Databricks ke andar ek **Lakeflow Job** me chalta hai:
 ```
 inbox (UC Volume) -> ingest -> bronze (Auto Loader) -> reconcile -> silver -> dq_gate -> gold (dbt on SQL warehouse) -> report notebook
                         └──────────────> Lakeflow Declarative Pipeline: bronze -> silver (expectations) -> SCD1/SCD2 (APPLY CHANGES) -> gold MVs
+gold ──synced tables──> Lakebase Postgres (serving layer: app/API lookups in ms)
 ```
 
 Free Edition ke features jo use hote hain: **Catalog** (schemas, volumes, tags, comments, lineage),
 **Data Ingestion** (Volume upload + Auto Loader), **Jobs & Pipelines** (Lakeflow Job + Lakeflow Declarative
-Pipeline), **Job Runs**, **Notebooks**, **SQL Warehouse**, **AI/BI Dashboard**.
+Pipeline), **Job Runs**, **Notebooks**, **Compute** (serverless + SQL warehouse), **Lakebase Postgres**
+(serving layer), **AI/BI Dashboard**.
 
 ```bash
 # .env: PIPELINE_ENV=databricks, DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_HTTP_PATH (Google SSO users bhi token bana sakte hain)
@@ -167,6 +169,7 @@ Poori architecture, feature map, decisions aur Free Edition limitations: **[docs
 | Run 2 (2027, inbox: synthetic batch) | 9/9 SUCCESS; 204 in, 6 quarantined, 3 duplicates, DQ gate 2.94%; dbt 37/37 |
 | SCD2 | southeast 2026 → Atlanta (364), 2027 → Miami (60) |
 | Lakeflow pipeline (13 tables) | bronze 1542 = silver 1536 + quarantine 6 → dedupe 1532; gold = dbt gold (1532 facts, same total charges, same SCD2) |
+| Lakebase serving | project `insurance-serving` (Postgres 17); synced tables `serve_member_risk` 1532/1532 rows + `agg_region_risk` ONLINE; UC se query verified. Postgres port 5432 se direct connect (`scripts/lakebase_lookup.py`) sandbox network ki wajah se test nahi hua |
 | CI/CD | `deploy-databricks.yml` (GitHub Actions) — workflow file likhi hai, GitHub par abhi chalaayi nahi |
 | Catalog | schema tags + table comments (dbt persist_docs) visible |
 | Dashboard | saari 7 dataset queries SQL warehouse par chalti hain |
@@ -195,6 +198,7 @@ Insight (`agg_smoker_loading`): 18-24 age me smoker ka average charge non-smoker
 ├── pipelines/                    Lakeflow Declarative Pipeline (SQL, expectations)
 ├── dashboards/                   AI/BI dashboard (.lvdash.json)
 ├── notebooks/                    Databricks notebook (job ka report task + analysis)
+├── scripts/lakebase_lookup.py    App-side example: Lakebase Postgres se member risk lookup
 ├── tests/                        pytest: landing, transformations, e2e (Spark + dbt)
 ├── docs/                         ELT vs ETL, large files, file naming, Databricks setup
 ├── Dockerfile, docker-compose.yml, .devcontainer/, .vscode/

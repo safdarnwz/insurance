@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "charliermarshall.ruff",
+    "ms-azuretools.vscode-docker",
+    "ms-vscode-remote.remote-containers",
+    "innoverio.vscode-dbt-power-user",
+    "databricks.databricks",
+    "redhat.vscode-yaml"
+  ]
+}

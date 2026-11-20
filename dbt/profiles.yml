@@ -1,0 +1,27 @@
+# dbt connection profiles. Is file me SECRET NAHI hai - token/host env vars se
+# aate hain (.env file, jo git me nahi jaati).
+# KYA NAHI KARNA: token yahan paste karke commit mat karna.
+insurance_lakehouse:
+  target: "{{ env_var('DBT_TARGET', 'local') }}"
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../data/warehouse/insurance.duckdb') }}"
+      schema: insurance_gold
+      # 1 thread: DuckDB ek file = ek writer. Parallel threads silver source ko ek
+      # saath load karke "write-write conflict" dete hain. (Databricks par 4 threads.)
+      threads: 1
+      # delta plugin: silver Delta tables (Spark ne likhi) ko deltalake (delta-rs)
+      # se padhta hai - DuckDB extension download ki zaroorat nahi (offline chalta hai)
+      plugins:
+        - module: delta
+
+    databricks:
+      type: databricks
+      catalog: "{{ env_var('UC_CATALOG', 'workspace') }}"
+      schema: insurance_gold
+      host: "{{ env_var('DATABRICKS_HOST', 'not-set') | replace('https://', '') | replace('/', '') }}"
+      # SQL Warehouses -> Serverless Starter Warehouse -> Connection details -> HTTP path
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH', 'not-set') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN', 'not-set') }}"
+      threads: 4

@@ -1,0 +1,118 @@
+# =============================================================================
+# Databricks Asset Bundle - Databricks FREE EDITION (serverless only)
+# -----------------------------------------------------------------------------
+# KYUN bundle: job UI me click karke banana = koi version control nahi. Bundle
+# me job YAML me hai -> git review, repeatable deploy (company standard).
+#
+# VS Code terminal (ya Docker `dev` container) se:
+#   databricks bundle validate
+#   databricks bundle deploy            # src/ + job workspace me
+#   databricks bundle run insurance_bronze_silver
+# Auth: .env me DATABRICKS_HOST + DATABRICKS_TOKEN (personal access token).
+#
+# Free Edition limits (docs.databricks.com -> Free Edition limitations):
+#   * sirf serverless compute (job_clusters / new_cluster allowed NAHI)
+#   * max 5 concurrent job tasks  -> hamare tasks sequential hain
+#   * Unity Catalog: default catalog `workspace`
+# =============================================================================
+bundle:
+  name: insurance_lakehouse
+
+variables:
+  catalog:
+    description: Unity Catalog catalog (Free Edition default = workspace)
+    default: workspace
+
+# Sirf zaroori files workspace me (data/, .venv, dbt target nahi)
+sync:
+  include:
+    - src/**
+    - databricks/**
+  exclude:
+    - data/**
+    - dbt/**
+    - "**/__pycache__/**"
+
+resources:
+  jobs:
+    insurance_bronze_silver:
+      # Fixed naam (prefix nahi) - Airflow isi naam se job dhoondhta hai
+      name: insurance-bronze-silver
+      # Ek saath 2 run nahi: streaming checkpoints + MERGE conflict se bachav
+      max_concurrent_runs: 1
+      # Schedule NAHI: orchestration Airflow (local Docker) karta hai.
+      # KYA NAHI KARNA: Airflow AUR Databricks dono me schedule - job do baar chalega.
+
+      # Serverless environment (Python packages). pyyaml serverless me hota hai;
+      # yahan explicit likha taaki dependency documented rahe.
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - pyyaml>=6.0
+
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+
+      tasks:
+        # Har step alag task: KYUN - silver fail ho to sirf silver "repair run",
+        # bronze dobara nahi. Har task ka alag log/duration.
+        - task_key: setup
+          environment_key: default
+          spark_python_task:
+            python_file: ./databricks/run_pipeline.py
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "setup"]
+
+        - task_key: bronze
+          depends_on: [{ task_key: setup }]
+          environment_key: default
+          max_retries: 1
+          spark_python_task:
+            python_file: ./databricks/run_pipeline.py
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "run", "--layer", "bronze"]
+
+        - task_key: reconcile
+          depends_on: [{ task_key: bronze }]
+          environment_key: default
+          spark_python_task:
+            python_file: ./databricks/run_pipeline.py
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "reconcile"]
+
+        - task_key: silver
+          depends_on: [{ task_key: reconcile }]
+          environment_key: default
+          max_retries: 1
+          spark_python_task:
+            python_file: ./databricks/run_pipeline.py
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "run", "--layer", "silver"]
+
+        - task_key: dq_gate
+          depends_on: [{ task_key: silver }]
+          environment_key: default
+          spark_python_task:
+            python_file: ./databricks/run_pipeline.py
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "dq-gate"]
+
+    insurance_maintenance:
+      name: insurance-maintenance
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - pyyaml>=6.0
+      tasks:
+        - task_key: optimize_vacuum
+          environment_key: default
+          spark_python_task:
+            python_file: ./databricks/run_pipeline.py
+            parameters: ["--env", "databricks", "maintenance"]
+
+targets:
+  dev:
+    default: true
+    # host: DATABRICKS_HOST env variable (.env) se aata hai - yahan hardcode nahi
+    workspace:
+      root_path: ~/.bundle/${bundle.name}/${bundle.target}

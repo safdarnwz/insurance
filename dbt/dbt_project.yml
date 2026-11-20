@@ -1,0 +1,45 @@
+# =============================================================================
+# dbt project - GOLD layer (ELT ka "T")
+# -----------------------------------------------------------------------------
+# KYUN dbt:
+#   * Business logic SQL me -> analysts bhi padh/likh sakte hain
+#   * ref() se dependency graph automatic -> sahi order me build
+#   * Tests (unique, not_null, relationships) har run me -> galat data gold tak nahi
+#   * Docs + lineage automatic (`insurance-pipeline dbt docs generate`)
+#   * Snapshots = SCD Type 2 bina manual MERGE code ke
+#
+# Ek hi project 2 targets par chalta hai (profiles.yml):
+#   local      -> DuckDB (laptop/Docker, free)
+#   databricks -> Databricks SQL warehouse (Free Edition), Unity Catalog tables
+# =============================================================================
+name: insurance_lakehouse
+version: "1.0.0"
+config-version: 2
+profile: insurance_lakehouse
+
+model-paths: ["models"]
+snapshot-paths: ["snapshots"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages", "logs"]
+
+models:
+  insurance_lakehouse:
+    staging:
+      # Staging = silver ka thin layer (rename/select). View: storage zero, hamesha latest.
+      +materialized: view
+      +schema: insurance_staging
+    marts:
+      # Marts = gold. Table: BI tools ko fast read.
+      +materialized: table
+      +schema: "{{ env_var('DBT_GOLD_SCHEMA', 'insurance_gold') }}"
+
+snapshots:
+  insurance_lakehouse:
+    +target_schema: insurance_snapshots
+
+tests:
+  # Fail hone wali rows table me save -> debug easy (`select * from ..._dbt_test__audit.<test>`)
+  +store_failures: true
+  +schema: insurance_dbt_test_audit

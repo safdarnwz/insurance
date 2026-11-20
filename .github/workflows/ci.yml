@@ -1,0 +1,29 @@
+# CI: har push/PR par lint + tests (Spark + dbt e2e) + dbt parse (dono targets) + compose validate.
+# KYUN: galat transformation merge hone se pehle pakda jaaye, dashboard par nahi.
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: pip install -r requirements.txt && pip install -e .
+      - run: ruff check src tests airflow databricks
+      - run: pytest -q -p no:logging
+      - name: dbt parse (local + databricks targets)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: .
+        run: dbt parse --target local && dbt parse --target databricks
+      - run: docker compose config -q

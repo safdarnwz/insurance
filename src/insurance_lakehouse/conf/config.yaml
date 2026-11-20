@@ -1,0 +1,102 @@
+# =============================================================================
+# Insurance Lakehouse - central configuration
+# -----------------------------------------------------------------------------
+# KYUN: Saare paths / names ek jagah. Same code laptop (local) aur Databricks
+#       Free Edition (databricks) dono par chale - sirf "--env" badalna pade.
+# KYA NAHI KARNA: Is file me kabhi secret (Databricks token, Kaggle key) mat
+#       likhna. Ye file git me jaati hai. Secrets -> .env (gitignored).
+# ${VAR} ya ${VAR:default} -> value environment variable se aati hai.
+# =============================================================================
+
+project: insurance_lakehouse
+
+kaggle:
+  # Kaggle "Medical Cost Personal Datasets": age, sex, bmi, children, smoker, region, charges
+  dataset: mirichoi0218/insurance
+  file_name: insurance.csv
+
+# -----------------------------------------------------------------------------
+# Source systems. Landing path aur file naming isi se banti hai (docs/FILE_NAMING.md):
+#   <landing>/<source_system>/<entity>/year=YYYY/month=MM/day=DD/
+#       <source_system>_<entity>_<YYYYMMDDTHHMMSSZ>_<batch_id>_part-00001.csv
+# -----------------------------------------------------------------------------
+sources:
+  member_charges:
+    source_system: kaggle
+    entity: member_charges
+    bronze_table: member_charges_raw
+  region_master:
+    source_system: crm
+    entity: region_master
+    bronze_table: region_master_raw
+
+# -----------------------------------------------------------------------------
+# Badi files (docs/LARGE_FILES.md). 1 TB file ek piece me kabhi process nahi hoti.
+# -----------------------------------------------------------------------------
+large_files:
+  # Isse badi file landing par hi chhote parts me todi jaati hai
+  split_threshold_mb: 256
+  split_chunk_mb: 128
+  # Ek micro-batch me max kitni files (1 TB = ~8000 parts -> 100-100 karke)
+  max_files_per_trigger: 100
+  # Spark ek input partition (task) me kitna data padhe. 128 MB standard hai.
+  max_partition_bytes: 134217728
+
+# Unity Catalog schema names (Databricks) / folder names (local)
+schemas:
+  landing: insurance_landing
+  bronze: insurance_bronze
+  silver: insurance_silver
+  gold: insurance_gold
+  audit: insurance_audit
+
+tables:
+  bronze:
+    member_charges_raw: member_charges_raw
+    region_master_raw: region_master_raw
+  silver:
+    member_charges: member_charges
+    member_charges_quarantine: member_charges_quarantine
+    region_master: region_master
+  audit:
+    pipeline_runs: pipeline_runs
+    silver_batch_stats: silver_batch_stats
+
+quality_gate:
+  # Silver me itne % se zyada rows reject hui to pipeline ROK do (gold mat banao).
+  # KYUN: source ne aadhi galat file bheji to dashboards me galat number jaane se
+  # better hai ki pipeline fail ho aur alert aaye ("circuit breaker").
+  max_reject_pct: 5.0
+
+environments:
+  # ---------------------------------------------------------------------------
+  # LOCAL: laptop / Docker par PySpark + delta-spark. Gold = dbt + DuckDB.
+  # Relative paths project root (insurance-lakehouse/) se resolve hote hain.
+  # ---------------------------------------------------------------------------
+  local:
+    table_mode: path          # Delta tables folder path se (local me metastore nahi)
+    storage:
+      landing: ./data/landing
+      bronze: ./data/lakehouse/bronze
+      silver: ./data/lakehouse/silver
+      audit: ./data/lakehouse/audit
+      checkpoints: ./data/lakehouse/_checkpoints
+      warehouse: ./data/warehouse/insurance.duckdb
+    use_autoloader: false
+    shuffle_partitions: 4
+    dbt_target: local
+
+  # ---------------------------------------------------------------------------
+  # DATABRICKS (Free Edition): serverless compute + Unity Catalog managed tables.
+  # Landing files + streaming checkpoints UC Volume me.
+  # Gold = dbt (dbt-databricks) SQL warehouse par.
+  # ---------------------------------------------------------------------------
+  databricks:
+    table_mode: catalog       # catalog.schema.table (UC managed Delta tables)
+    catalog: ${UC_CATALOG:workspace}
+    storage:
+      landing: /Volumes/${UC_CATALOG:workspace}/insurance_landing/files
+      checkpoints: /Volumes/${UC_CATALOG:workspace}/insurance_landing/checkpoints
+    use_autoloader: true
+    shuffle_partitions: auto  # serverless khud tune karta hai
+    dbt_target: databricks

@@ -1,0 +1,58 @@
+version: 2
+
+models:
+  - name: dim_region
+    description: "Region dimension - SCD Type 2 (history of regional office / risk zone)"
+    columns:
+      - name: region_sk
+        description: "Surrogate key = md5(region, version start)"
+        data_tests: [unique, not_null]
+      - name: risk_zone
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Low", "Medium", "High"]
+
+  - name: dim_member_profile
+    description: "Junk dimension of member attributes + underwriting risk segment"
+    columns:
+      - name: profile_key
+        data_tests: [unique, not_null]
+      - name: risk_segment
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Low", "Medium", "High", "Very High"]
+
+  - name: fact_member_charges
+    description: "Fact: 1 row per member per policy year. Incremental."
+    columns:
+      - name: record_id
+        data_tests: [unique, not_null]
+      - name: region_sk
+        description: "Point-in-time region version (orphan = point-in-time join bug)"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_region')
+                field: region_sk
+      - name: profile_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_member_profile')
+                field: profile_key
+      - name: charges
+        data_tests: [not_null, positive_value]
+
+  - name: agg_charges_by_segment
+    description: "Charges by year x region x smoker x BMI category"
+  - name: agg_smoker_loading
+    description: "Smoker loading factor by age band (pricing input)"
+  - name: agg_region_risk
+    description: "Region scorecard"
+    columns:
+      - name: region
+        data_tests: [unique, not_null]

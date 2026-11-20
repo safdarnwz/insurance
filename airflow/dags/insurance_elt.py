@@ -1,14 +1,12 @@
 """
 ### Insurance ELT pipeline (Medallion)
 
-**Flow:** Kaggle/sample file -> Landing (standard naming + manifest) -> Bronze (Spark)
--> Reconcile -> Silver (Spark) -> DQ gate -> Gold (dbt build) -> dbt docs
+`PIPELINE_ENV` (.env) decide karta hai pipeline kahan chalega:
 
-`PIPELINE_ENV` (.env) decide karta hai Spark kahan chalega:
-* `local`      -> isi Docker container me PySpark (laptop par, free)
-* `databricks` -> Databricks Free Edition par serverless job (`databricks.yml`)
-
-dbt hamesha isi container se chalta hai (local: DuckDB, databricks: SQL warehouse).
+* `local` -> isi Docker container me: sample file -> Landing -> Bronze (Spark) -> Reconcile
+  -> Silver (Spark) -> DQ gate -> Gold (dbt + DuckDB) -> dbt docs
+* `databricks` -> Databricks Free Edition par poora job `insurance-medallion-pipeline`
+  (inbox Volume -> ... -> gold dbt -> report notebook). Airflow sirf trigger + wait karta hai.
 
 **Manual run with options:** Trigger DAG w/ config, e.g.
 `{"source": "synthetic", "ingest_date": "2027-01-01"}` (next year + dirty data + region change)
@@ -68,28 +66,31 @@ with DAG(
 
     ingest_date = resolve_ingest_date()
 
-    land = BashOperator(
-        task_id="land_to_landing",
-        doc_md="Source file -> landing/<system>/<entity>/year=/month=/day=/ + manifest (badi file auto-split)",
-        bash_command=(
-            f"{CLI} ingest --source {{{{ params.source }}}} "
-            "--ingest-date {{ ti.xcom_pull(task_ids='resolve_ingest_date') }}"
-        ),
-    )
-
     if PIPELINE_ENV == "databricks":
         from airflow.providers.databricks.operators.databricks import DatabricksRunNowOperator
 
-        # Bronze -> reconcile -> silver -> dq_gate ek Databricks job me (databricks.yml).
-        # Airflow job ke khatam hone tak wait karta hai; fail = DAG fail.
-        spark_steps = DatabricksRunNowOperator(
-            task_id="bronze_silver_on_databricks",
+        # DATABRICKS MODE: data lake + poora pipeline Databricks ke andar hai
+        # (inbox Volume -> ingest -> bronze -> silver -> dq -> gold dbt -> report),
+        # job `insurance-medallion-pipeline` (databricks.yml). Airflow sirf trigger +
+        # wait karta hai - "enterprise orchestrator" pattern (Airflow kai systems ke
+        # jobs ko ek jagah se chalata hai).
+        # NOTE: Databricks job ka file-arrival trigger bhi hai (PAUSED). Dono ON mat karo.
+        DatabricksRunNowOperator(
+            task_id="run_databricks_medallion_job",
             databricks_conn_id="databricks_default",
-            job_name="insurance-bronze-silver",
-        )
-        ingest_date >> land >> spark_steps
-        last_spark = spark_steps
+            job_name="insurance-medallion-pipeline",
+            job_parameters={"ingest_date": "{{ ti.xcom_pull(task_ids='resolve_ingest_date') }}"},
+        ).set_upstream(ingest_date)
     else:
+        # LOCAL MODE: sab kuch is Docker container me (Spark local + dbt DuckDB)
+        land = BashOperator(
+            task_id="land_to_landing",
+            doc_md="Source file -> landing/<system>/<entity>/year=/month=/day=/ + manifest (badi file auto-split)",
+            bash_command=(
+                f"{CLI} ingest --source {{{{ params.source }}}} "
+                "--ingest-date {{ ti.xcom_pull(task_ids='resolve_ingest_date') }}"
+            ),
+        )
         setup = BashOperator(task_id="setup", bash_command=f"{CLI} setup")
         bronze = BashOperator(task_id="bronze", bash_command=f"{CLI} run --layer bronze")
         reconcile = BashOperator(
@@ -105,17 +106,10 @@ with DAG(
             bash_command=f"{CLI} dq-gate",
             retries=0,
         )
-        ingest_date >> land >> setup >> bronze >> reconcile >> silver >> dq_gate
-        last_spark = dq_gate
-
-    gold = BashOperator(
-        task_id="gold_dbt_build",
-        doc_md="dbt build = snapshot (SCD2) + models + tests. Koi test fail -> downstream skip.",
-        bash_command=f"{CLI} run --layer gold",
-    )
-    docs = BashOperator(
-        task_id="dbt_docs_generate",
-        bash_command=f"{CLI} dbt docs generate",
-        retries=0,
-    )
-    last_spark >> gold >> docs
+        gold = BashOperator(
+            task_id="gold_dbt_build",
+            doc_md="dbt build = snapshot (SCD2) + models + tests. Koi test fail -> downstream skip.",
+            bash_command=f"{CLI} run --layer gold",
+        )
+        docs = BashOperator(task_id="dbt_docs_generate", bash_command=f"{CLI} dbt docs generate", retries=0)
+        ingest_date >> setup >> land >> bronze >> reconcile >> silver >> dq_gate >> gold >> docs

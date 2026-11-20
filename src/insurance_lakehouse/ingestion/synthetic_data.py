@@ -70,27 +70,34 @@ def _inject_dirty_data(rng: random.Random, rows: list[dict]) -> list[str]:
     return ['33,"male,unclosed quote line,no']        # broken CSV line
 
 
-def generate_incremental_batch(cfg: PipelineConfig, batch_no: int, ingest_date: str, n_new: int = 200) -> dict:
+def write_incremental_batch_files(out_dir: Path, batch_no: int, n_new: int = 200) -> dict[str, Path]:
+    """Next-year batch ki CSV files banao (landing / inbox dono ke liye reuse)."""
     rng = random.Random(1000 + batch_no)
     rows = [make_member(rng) for _ in range(n_new)]
     broken = _inject_dirty_data(rng, rows)
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "members.csv"
-        _write_csv(src, MEMBER_COLUMNS, rows, broken)
-        manifest = land_file(cfg, "member_charges", src, ingest_date)
+    files = {"member_charges": out_dir / f"members_batch{batch_no}.csv"}
+    _write_csv(files["member_charges"], MEMBER_COLUMNS, rows, broken)
+    if batch_no == 2:  # Region master change -> SCD2 demo
+        with open(SAMPLE_DIR / "region_master.csv", newline="", encoding="utf-8") as fh:
+            regions = list(csv.DictReader(fh))
+        for r in regions:
+            if r["region"] == "southeast":
+                r["regional_office"] = "Miami"
+            if r["region"] == "northwest":
+                r["risk_zone"] = "Medium"
+        files["region_master"] = out_dir / f"region_master_batch{batch_no}.csv"
+        _write_csv(files["region_master"], REGION_COLUMNS, regions)
+        log.info("Region master change: southeast office -> Miami, northwest risk -> Medium")
+    return files
 
-        if batch_no == 2:  # Region master change -> SCD2 demo
-            with open(SAMPLE_DIR / "region_master.csv", newline="", encoding="utf-8") as fh:
-                regions = list(csv.DictReader(fh))
-            for r in regions:
-                if r["region"] == "southeast":
-                    r["regional_office"] = "Miami"
-                if r["region"] == "northwest":
-                    r["risk_zone"] = "Medium"
-            rsrc = Path(tmp) / "regions.csv"
-            _write_csv(rsrc, REGION_COLUMNS, regions)
-            land_file(cfg, "region_master", rsrc, ingest_date)
-            log.info("Region master change: southeast office -> Miami, northwest risk -> Medium")
+
+def generate_incremental_batch(cfg: PipelineConfig, batch_no: int, ingest_date: str, n_new: int = 200) -> dict:
+    """Next-year batch seedha LANDING me (local demo)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        files = write_incremental_batch_files(Path(tmp), batch_no, n_new)
+        manifest = land_file(cfg, "member_charges", files["member_charges"], ingest_date)
+        if "region_master" in files:
+            land_file(cfg, "region_master", files["region_master"], ingest_date)
     log.info("Incremental batch %d: %d rows (dirty rows + duplicates ke saath)", batch_no, manifest["total_rows"])
     return manifest
 

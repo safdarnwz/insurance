@@ -1,19 +1,25 @@
 # =============================================================================
-# Databricks Asset Bundle - Databricks FREE EDITION (serverless only)
+# Databricks Asset Bundle - Insurance Medallion Lakehouse (Databricks FREE EDITION)
 # -----------------------------------------------------------------------------
-# KYUN bundle: job UI me click karke banana = koi version control nahi. Bundle
-# me job YAML me hai -> git review, repeatable deploy (company standard).
+# Poora pipeline Databricks ke andar ek Lakeflow Job (Workflow) me:
 #
-# VS Code terminal (ya Docker `dev` container) se:
+#   inbox (UC Volume, drop zone)
+#     -> setup -> ingest -> bronze -> reconcile -> silver -> dq_gate -> gold (dbt)
+#
+# KYUN bundle (Infrastructure-as-Code): job UI me click karke banana = koi
+# version control nahi. Bundle se job YAML me hai -> git review, CI/CD deploy.
+#
+# Laptop / Docker `dev` container se:
+#   insurance-pipeline --env databricks setup  # schemas + volumes (artifacts volume deploy se pehle chahiye)
+#   export DATABRICKS_BUNDLE_ENGINE=direct   # Terraform ke bina deploy
 #   databricks bundle validate
-#   databricks bundle deploy            # src/ + job workspace me
-#   databricks bundle run insurance_bronze_silver
-# Auth: .env me DATABRICKS_HOST + DATABRICKS_TOKEN (personal access token).
+#   databricks bundle deploy --var warehouse_id=<sql-warehouse-id>
+#   databricks bundle run insurance_medallion
+# Auth: DATABRICKS_HOST + DATABRICKS_TOKEN (.env)
 #
-# Free Edition limits (docs.databricks.com -> Free Edition limitations):
-#   * sirf serverless compute (job_clusters / new_cluster allowed NAHI)
-#   * max 5 concurrent job tasks  -> hamare tasks sequential hain
-#   * Unity Catalog: default catalog `workspace`
+# Free Edition limits handled: sirf serverless (koi cluster config nahi), max 5
+# concurrent tasks (hamare sequential hain), workspace files ke transient errors
+# (retries), Unity Catalog default catalog `workspace`.
 # =============================================================================
 bundle:
   name: insurance_lakehouse
@@ -22,93 +28,220 @@ variables:
   catalog:
     description: Unity Catalog catalog (Free Edition default = workspace)
     default: workspace
+  warehouse_id:
+    description: SQL warehouse id (dbt gold ke liye) - SQL Warehouses -> Serverless Starter Warehouse
+  alert_email:
+    description: Failure par email
+    default: ""
 
-# Sirf zaroori files workspace me (data/, .venv, dbt target nahi)
+# CODE = versioned WHEEL (industry standard). Bundle build karke UC Volume
+# `artifacts` me upload karta hai; serverless environment use install karta hai.
+# KYUN (workspace files ki jagah): immutable + versioned artifact, rollback easy,
+# aur Free Edition par workspace files ke transient I/O errors se bachav.
+# dynamic_version: har deploy par version me timestamp -> serverless purana
+# cached wheel nahi chalata (warna naya code deploy hone ke baad bhi purana chalta).
+artifacts:
+  default:
+    type: whl
+    # dbt project ko wheel ke andar copy karke build (gold step job me wheel se chalta hai)
+    build: >-
+      python -c "import shutil; shutil.copytree('dbt', 'src/insurance_lakehouse/_dbt_project',
+      dirs_exist_ok=True, ignore=shutil.ignore_patterns('target', 'logs', '.user.yml'))"
+      && python -m build --wheel
+    path: .
+    dynamic_version: true
+
+# Sirf zaroori files workspace me
 sync:
   include:
-    - src/**
-    - databricks/**
+    - notebooks/**
+    - pipelines/**
+    - dashboards/**
   exclude:
     - data/**
-    - dbt/**
+    - dbt/target/**
+    - dbt/logs/**
     - "**/__pycache__/**"
 
 resources:
   jobs:
-    insurance_bronze_silver:
-      # Fixed naam (prefix nahi) - Airflow isi naam se job dhoondhta hai
-      name: insurance-bronze-silver
-      # Ek saath 2 run nahi: streaming checkpoints + MERGE conflict se bachav
+    insurance_medallion:
+      name: insurance-medallion-pipeline
+      description: "Inbox -> Landing -> Bronze -> Silver -> Gold (dbt). Owner: data-engineering"
+      tags:
+        domain: insurance
+        layer: medallion
+      # Ek saath 2 run nahi: streaming checkpoints / MERGE / snapshot conflict se bachav
       max_concurrent_runs: 1
-      # Schedule NAHI: orchestration Airflow (local Docker) karta hai.
-      # KYA NAHI KARNA: Airflow AUR Databricks dono me schedule - job do baar chalega.
+      timeout_seconds: 7200
 
-      # Serverless environment (Python packages). pyyaml serverless me hota hai;
-      # yahan explicit likha taaki dependency documented rahe.
-      environments:
-        - environment_key: default
-          spec:
-            environment_version: "4"
-            dependencies:
-              - pyyaml>=6.0
+      # EVENT-DRIVEN (industry standard): inbox me nayi file aate hi job chale.
+      # Default PAUSED - pehle manual run se check karo, phir UI/YAML se UNPAUSED.
+      # KYA NAHI KARNA: file trigger + Airflow schedule dono ON - double runs.
+      trigger:
+        pause_status: PAUSED
+        file_arrival:
+          url: /Volumes/${var.catalog}/insurance_landing/inbox/
+          min_time_between_triggers_seconds: 300
 
       parameters:
         - name: catalog
           default: ${var.catalog}
+        - name: ingest_date
+          default: ""   # khali = aaj (UTC)
 
-      tasks:
-        # Har step alag task: KYUN - silver fail ho to sirf silver "repair run",
-        # bronze dobara nahi. Har task ka alag log/duration.
-        - task_key: setup
-          environment_key: default
-          spark_python_task:
-            python_file: ./databricks/run_pipeline.py
-            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "setup"]
-
-        - task_key: bronze
-          depends_on: [{ task_key: setup }]
-          environment_key: default
-          max_retries: 1
-          spark_python_task:
-            python_file: ./databricks/run_pipeline.py
-            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "run", "--layer", "bronze"]
-
-        - task_key: reconcile
-          depends_on: [{ task_key: bronze }]
-          environment_key: default
-          spark_python_task:
-            python_file: ./databricks/run_pipeline.py
-            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "reconcile"]
-
-        - task_key: silver
-          depends_on: [{ task_key: reconcile }]
-          environment_key: default
-          max_retries: 1
-          spark_python_task:
-            python_file: ./databricks/run_pipeline.py
-            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "run", "--layer", "silver"]
-
-        - task_key: dq_gate
-          depends_on: [{ task_key: silver }]
-          environment_key: default
-          spark_python_task:
-            python_file: ./databricks/run_pipeline.py
-            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "dq-gate"]
-
-    insurance_maintenance:
-      name: insurance-maintenance
       environments:
-        - environment_key: default
+        # Spark tasks (bronze/silver) - serverless environment
+        - environment_key: spark
           spec:
             environment_version: "4"
             dependencies:
-              - pyyaml>=6.0
+              - ./dist/*.whl
+        # dbt gold - wheel (packaged dbt project) + dbt-databricks
+        - environment_key: dbt
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ./dist/*.whl
+              - dbt-databricks>=1.10,<2.0
+
+      tasks:
+        - task_key: setup
+          description: "UC schemas + volumes (idempotent)"
+          environment_key: spark
+          # Retry: Free Edition par workspace files kabhi-kabhi transient I/O (403)
+          # error dete hain. Saare steps idempotent hain, isliye retry safe hai.
+          max_retries: 2
+          min_retry_interval_millis: 30000
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "setup"]
+
+        - task_key: ingest
+          description: "inbox (drop zone) -> landing (standard naming + manifest) -> _archive"
+          depends_on: [{ task_key: setup }]
+          environment_key: spark
+          max_retries: 2
+          min_retry_interval_millis: 30000
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}",
+                         "ingest", "--source", "inbox", "--ingest-date", "{{job.parameters.ingest_date}}"]
+
+        - task_key: bronze
+          description: "Auto Loader: landing CSV -> bronze Delta (raw, append-only)"
+          depends_on: [{ task_key: ingest }]
+          environment_key: spark
+          max_retries: 2
+          min_retry_interval_millis: 30000
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "run", "--layer", "bronze"]
+
+        - task_key: reconcile
+          description: "Manifest row counts == bronze rows (silent data loss check)"
+          depends_on: [{ task_key: bronze }]
+          environment_key: spark
+          max_retries: 2
+          min_retry_interval_millis: 30000
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "reconcile"]
+
+        - task_key: silver
+          description: "Clean + DQ rules + quarantine + MERGE"
+          depends_on: [{ task_key: reconcile }]
+          environment_key: spark
+          max_retries: 2
+          min_retry_interval_millis: 30000
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "run", "--layer", "silver"]
+
+        - task_key: dq_gate
+          description: "Reject % > limit -> stop (gold purane sahi data par rahe)"
+          depends_on: [{ task_key: silver }]
+          environment_key: spark
+          max_retries: 2
+          min_retry_interval_millis: 30000
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}", "dq-gate"]
+
+        - task_key: gold_dbt
+          description: "dbt build on SQL warehouse: snapshot (SCD2) + star schema + KPIs + tests"
+          depends_on: [{ task_key: dq_gate }]
+          environment_key: dbt
+          max_retries: 1
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
+            parameters: ["--env", "databricks", "--catalog", "{{job.parameters.catalog}}",
+                         "--warehouse-id", "${var.warehouse_id}", "run", "--layer", "gold"]
+
+        # Databricks-native Lakeflow Declarative Pipeline (DLT) - same landing data,
+        # alag schema. Parallel branch: iska fail main gold ko block nahi karta.
+        - task_key: lakeflow_pipeline
+          description: "Lakeflow Declarative Pipeline (expectations) - insurance_lakeflow schema"
+          depends_on: [{ task_key: ingest }]
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.insurance_lakeflow.id}
+
+        # Notebook task: run ke end me quality/KPI report (Runs page par output dikhta hai)
+        - task_key: quality_report
+          description: "Notebook: pipeline health + DQ + KPIs"
+          depends_on: [{ task_key: gold_dbt }]
+          notebook_task:
+            notebook_path: ./notebooks/insurance_analysis.py
+
+    insurance_maintenance:
+      name: insurance-maintenance
+      description: "Weekly OPTIMIZE + VACUUM"
+      schedule:
+        quartz_cron_expression: "0 40 3 ? * SUN"
+        timezone_id: UTC
+        pause_status: PAUSED
+      environments:
+        - environment_key: spark
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ./dist/*.whl
       tasks:
         - task_key: optimize_vacuum
-          environment_key: default
-          spark_python_task:
-            python_file: ./databricks/run_pipeline.py
+          environment_key: spark
+          max_retries: 2
+          python_wheel_task:
+            package_name: insurance_lakehouse
+            entry_point: insurance-pipeline
             parameters: ["--env", "databricks", "maintenance"]
+
+  # ---------------------------------------------------------------- Lakeflow
+  pipelines:
+    insurance_lakeflow:
+      name: insurance-lakeflow-pipeline
+      catalog: ${var.catalog}
+      schema: insurance_lakeflow
+      serverless: true          # Free Edition: sirf serverless
+      continuous: false         # triggered (batch-like); continuous = hamesha chalu (mehenga)
+      development: true         # dev mode: fail par cluster/compute restart ka wait nahi
+      channel: CURRENT
+      libraries:
+        - file:
+            path: ./pipelines/insurance_lakeflow.sql
+
+  # ---------------------------------------------------------------- AI/BI Dashboard
+  dashboards:
+    insurance_overview:
+      display_name: "Insurance Lakehouse - Overview"
+      file_path: ./dashboards/insurance_overview.lvdash.json
+      warehouse_id: ${var.warehouse_id}
 
 targets:
   dev:
@@ -116,3 +249,5 @@ targets:
     # host: DATABRICKS_HOST env variable (.env) se aata hai - yahan hardcode nahi
     workspace:
       root_path: ~/.bundle/${bundle.name}/${bundle.target}
+      # Wheel UC Volume me (governed storage) - workspace files me nahi
+      artifact_path: /Volumes/${var.catalog}/insurance_landing/artifacts

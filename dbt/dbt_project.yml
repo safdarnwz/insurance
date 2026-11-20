@@ -30,6 +30,12 @@ models:
       # Staging = silver ka thin layer (rename/select). View: storage zero, hamesha latest.
       +materialized: view
       +schema: insurance_staging
+    # Databricks: _marts.yml / _staging.yml ki descriptions Unity Catalog table +
+    # column COMMENTS ban jaati hain -> Catalog Explorer, Genie, AI/BI me dikhti hain
+    # (data discovery / governance standard). DuckDB par ignore.
+    +persist_docs:
+      relation: "{{ target.type == 'databricks' }}"
+      columns: "{{ target.type == 'databricks' }}"
     marts:
       # Marts = gold. Table: BI tools ko fast read.
       +materialized: table

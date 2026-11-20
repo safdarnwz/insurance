@@ -67,3 +67,36 @@ display(spark.sql("""
 
 display(spark.sql("DESCRIBE HISTORY insurance_silver.member_charges"))
 # display(spark.sql("SELECT count(*) FROM insurance_silver.member_charges VERSION AS OF 0"))
+
+# COMMAND ----------
+
+# MAGIC %md ## 6. Lakeflow Declarative Pipeline (DLT) - expectations ka result
+# MAGIC Same landing data, Databricks-native pipeline (`insurance_lakeflow` schema).
+# MAGIC Jobs & Pipelines -> insurance-lakeflow-pipeline -> table click -> **Data quality** tab me har expectation ke pass/fail counts.
+
+# COMMAND ----------
+
+display(spark.sql("""
+  SELECT 'bronze' AS layer, count(*) AS rows FROM insurance_lakeflow.member_charges_bronze
+  UNION ALL SELECT 'silver (expectations pass)', count(*) FROM insurance_lakeflow.member_charges_silver
+  UNION ALL SELECT 'quarantine (expectations fail)', count(*) FROM insurance_lakeflow.member_charges_quarantine
+"""))
+
+# COMMAND ----------
+
+display(spark.table("insurance_lakeflow.charges_by_region_smoker").orderBy("region", "smoker_status"))
+
+# COMMAND ----------
+
+# MAGIC %md ## 7. Unity Catalog - lineage & governance
+# MAGIC * **Catalog** -> `workspace` -> `insurance_gold` -> `fact_member_charges` -> **Lineage** tab: silver -> staging -> gold graph (automatic).
+# MAGIC * Schema **tags** (`domain`, `layer`, `data_classification`) aur table/column **comments** (dbt `persist_docs`) yahin dikhte hain.
+
+# COMMAND ----------
+
+display(spark.sql("""
+  SELECT schema_name, tag_name, tag_value
+  FROM system.information_schema.schema_tags
+  WHERE catalog_name = 'workspace' AND schema_name LIKE 'insurance_%'
+  ORDER BY schema_name, tag_name
+"""))

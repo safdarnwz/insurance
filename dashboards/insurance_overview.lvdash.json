@@ -1,0 +1,564 @@
+{
+  "datasets": [
+    {
+      "name": "kpis",
+      "displayName": "KPIs",
+      "queryLines": [
+        "SELECT count(*) AS members, round(sum(charges),0) AS total_charges, round(avg(charges),0) AS avg_charges, ",
+        "round(avg(smoker_flag)*100,1) AS smoker_pct FROM workspace.insurance_gold.fact_member_charges"
+      ]
+    },
+    {
+      "name": "quarantine",
+      "displayName": "Quarantine",
+      "queryLines": [
+        "SELECT count(*) AS rejected_rows FROM workspace.insurance_silver.member_charges_quarantine"
+      ]
+    },
+    {
+      "name": "region_risk",
+      "displayName": "Region risk",
+      "queryLines": [
+        "SELECT * FROM workspace.insurance_gold.agg_region_risk"
+      ]
+    },
+    {
+      "name": "smoker_loading",
+      "displayName": "Smoker loading",
+      "queryLines": [
+        "SELECT * FROM workspace.insurance_gold.agg_smoker_loading"
+      ]
+    },
+    {
+      "name": "segment",
+      "displayName": "Segments",
+      "queryLines": [
+        "SELECT * FROM workspace.insurance_gold.agg_charges_by_segment"
+      ]
+    },
+    {
+      "name": "risk_segment",
+      "displayName": "Risk segment",
+      "queryLines": [
+        "SELECT p.risk_segment, count(*) AS members, round(avg(f.charges),0) AS avg_charges ",
+        "FROM workspace.insurance_gold.fact_member_charges f JOIN workspace.insurance_gold.dim_member_profile p USING (profile_key) GROUP BY ALL"
+      ]
+    },
+    {
+      "name": "yearly",
+      "displayName": "Yearly",
+      "queryLines": [
+        "SELECT cast(policy_year AS STRING) AS policy_year, count(*) AS members, round(sum(charges),0) AS total_charges ",
+        "FROM workspace.insurance_gold.fact_member_charges GROUP BY ALL ORDER BY 1"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "overview",
+      "displayName": "Overview",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Insurance Lakehouse \u2014 Health Insurance Analytics\n",
+                "Source: Kaggle Medical Cost dataset -> UC Volume inbox -> Bronze -> Silver -> Gold (dbt). ",
+                "Data: `workspace.insurance_gold`"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_members",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpis",
+                  "fields": [
+                    {
+                      "name": "members",
+                      "expression": "`members`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "members",
+                  "displayName": "Members"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Members"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 1,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_total",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpis",
+                  "fields": [
+                    {
+                      "name": "total_charges",
+                      "expression": "`total_charges`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_charges",
+                  "displayName": "Total charges ($)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total charges ($)"
+              }
+            }
+          },
+          "position": {
+            "x": 1,
+            "y": 2,
+            "width": 1,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_avg",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpis",
+                  "fields": [
+                    {
+                      "name": "avg_charges",
+                      "expression": "`avg_charges`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg_charges",
+                  "displayName": "Avg charge ($)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg charge ($)"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 1,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_smoker",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpis",
+                  "fields": [
+                    {
+                      "name": "smoker_pct",
+                      "expression": "`smoker_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "smoker_pct",
+                  "displayName": "Smokers (%)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Smokers (%)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 1,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_rejected",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "quarantine",
+                  "fields": [
+                    {
+                      "name": "rejected_rows",
+                      "expression": "`rejected_rows`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "rejected_rows",
+                  "displayName": "DQ rejected rows"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "DQ rejected rows"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 1,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "b_region",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "region_risk",
+                  "fields": [
+                    {
+                      "name": "region",
+                      "expression": "`region`"
+                    },
+                    {
+                      "name": "avg_charges",
+                      "expression": "`avg_charges`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "region",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "region"
+                },
+                "y": {
+                  "fieldName": "avg_charges",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Avg charges"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg charges by region"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b_loading",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "smoker_loading",
+                  "fields": [
+                    {
+                      "name": "age_band",
+                      "expression": "`age_band`"
+                    },
+                    {
+                      "name": "smoker_loading_factor",
+                      "expression": "`smoker_loading_factor`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "age_band",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "age_band"
+                },
+                "y": {
+                  "fieldName": "smoker_loading_factor",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Smoker / non-smoker"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Smoker loading factor by age band (pricing)"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 5,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b_bmi",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "segment",
+                  "fields": [
+                    {
+                      "name": "bmi_category",
+                      "expression": "`bmi_category`"
+                    },
+                    {
+                      "name": "avg_charges",
+                      "expression": "`avg_charges`"
+                    },
+                    {
+                      "name": "smoker_status",
+                      "expression": "`smoker_status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "bmi_category",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "bmi_category"
+                },
+                "y": {
+                  "fieldName": "avg_charges",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Avg charges"
+                },
+                "color": {
+                  "fieldName": "smoker_status",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "smoker_status"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg charges: BMI category x smoker"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b_risk",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "risk_segment",
+                  "fields": [
+                    {
+                      "name": "risk_segment",
+                      "expression": "`risk_segment`"
+                    },
+                    {
+                      "name": "avg_charges",
+                      "expression": "`avg_charges`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "risk_segment",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "risk_segment"
+                },
+                "y": {
+                  "fieldName": "avg_charges",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Avg charges"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg charges by underwriting risk segment"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 11,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b_year",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "yearly",
+                  "fields": [
+                    {
+                      "name": "policy_year",
+                      "expression": "`policy_year`"
+                    },
+                    {
+                      "name": "total_charges",
+                      "expression": "`total_charges`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "policy_year",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "policy_year"
+                },
+                "y": {
+                  "fieldName": "total_charges",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Total charges"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total charges by policy year"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 17,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ]
+}

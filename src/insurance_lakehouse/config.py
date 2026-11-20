@@ -150,6 +150,11 @@ class PipelineConfig:
         s = self.sources[source]
         return f"{self.storage['landing']}/{s['source_system']}/{s['entity']}"
 
+    def inbox_dir(self, source: str) -> str:
+        """Drop zone: <inbox>/<source_system>/<entity>/  (source system yahan file rakhta hai)"""
+        s = self.sources[source]
+        return f"{self.storage['inbox']}/{s['source_system']}/{s['entity']}"
+
     def checkpoint(self, name: str) -> str:
         """Har streaming query ka apna checkpoint folder.
         KYA NAHI KARNA: do streams ka ek checkpoint share mat karo - offsets

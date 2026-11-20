@@ -2,6 +2,9 @@
 CLI entry point  (`pip install -e .` ke baad `insurance-pipeline` command).
 
   insurance-pipeline setup                                   # folders / UC schemas+volumes
+  insurance-pipeline upload-inbox --sample                   # source files -> inbox (drop zone)
+  insurance-pipeline upload-inbox --synthetic-batch 2        # next-year files -> inbox
+  insurance-pipeline ingest --source inbox                   # inbox -> landing (+ manifest, archive)
   insurance-pipeline ingest --ingest-date 2026-01-01         # sample_data/insurance.csv -> landing
   insurance-pipeline ingest --source kaggle                  # Kaggle API se
   insurance-pipeline ingest --source synthetic --batch 2 --ingest-date 2027-01-01   # next year + dirty data
@@ -39,9 +42,11 @@ def _spark(cfg):
 
 
 def _cmd_setup(cfg, args):
+    from .spark_session import is_databricks_runtime
     from .utils.maintenance import setup
 
-    setup(_spark(cfg) if cfg.table_mode == "catalog" else None, cfg)
+    # Databricks job ke andar -> Spark SQL; bahar (laptop/Airflow) -> SQL warehouse; local -> folders
+    setup(_spark(cfg) if cfg.table_mode == "catalog" and is_databricks_runtime() else None, cfg)
 
 
 def _cmd_ingest(cfg, args):
@@ -49,6 +54,9 @@ def _cmd_ingest(cfg, args):
     from .ingestion.synthetic_data import generate_incremental_batch
 
     d = args.ingest_date or dt.date.today().isoformat()
+    if args.source == "inbox":
+        landing.land_from_inbox(cfg, d)
+        return
     if args.source == "synthetic":
         generate_incremental_batch(cfg, args.batch, ingest_date=d)
         return
@@ -66,6 +74,26 @@ def _cmd_ingest(cfg, args):
     # Real me reference data apne source system se apne schedule par aata hai.
     if args.source in ("sample", "kaggle") or args.with_region_master:
         landing.land_region_master(cfg, d)
+
+
+def _cmd_upload_inbox(cfg, args):
+    from .ingestion import landing
+
+    if args.sample:
+        landing.upload_to_inbox(cfg, "member_charges", landing.SAMPLE_DIR / "insurance.csv")
+        landing.upload_to_inbox(cfg, "region_master", landing.SAMPLE_DIR / "region_master.csv")
+    elif args.synthetic_batch:
+        import tempfile
+
+        from .ingestion.synthetic_data import write_incremental_batch_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for entity, f in write_incremental_batch_files(Path(tmp), args.synthetic_batch).items():
+                landing.upload_to_inbox(cfg, entity, f)
+    elif args.path:
+        landing.upload_to_inbox(cfg, args.entity, args.path)
+    else:
+        raise SystemExit("--sample ya --path <csv> do")
 
 
 def _cmd_generate_large(cfg, args):
@@ -158,18 +186,28 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="insurance-pipeline", description="Insurance Medallion Lakehouse (ELT)")
     p.add_argument("--env", default=None, help="local | databricks (default: PIPELINE_ENV ya local)")
     p.add_argument("--catalog", default=None, help="Databricks UC catalog (default: workspace)")
+    p.add_argument("--warehouse-id", default=None, help="Databricks SQL warehouse id (dbt gold ke liye)")
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("setup", help="Folders / UC schemas + volumes banao")
 
     s = sub.add_parser("ingest", help="Source file -> landing (standard naming + manifest)")
-    s.add_argument("--source", choices=["sample", "kaggle", "file", "synthetic"], default="sample")
+    s.add_argument("--source", choices=["inbox", "sample", "kaggle", "file", "synthetic"], default="sample",
+                   help="inbox=drop zone (Databricks standard), sample=repo file, kaggle=API, file=--path, "
+                        "synthetic=next-year batch")
     s.add_argument("--path", default=None, help="--source file ke liye CSV path")
     s.add_argument("--batch", type=int, default=2, help="--source synthetic: batch number")
     s.add_argument("--ingest-date", default=None, help="Business date YYYY-MM-DD (default: aaj)")
     s.add_argument("--split-mb", type=int, default=None, help="Isse badi file split ho (default config)")
     s.add_argument("--chunk-mb", type=int, default=None, help="Har part ka size MB (default config)")
     s.add_argument("--with-region-master", action="store_true", help="sample_data/region_master.csv bhi bhejo")
+
+    s = sub.add_parser("upload-inbox", help="File ko inbox (drop zone) me rakho - source system ki tarah")
+    s.add_argument("--sample", action="store_true", help="sample_data ki dono files")
+    s.add_argument("--synthetic-batch", type=int, default=None,
+                   help="Next-year batch (dirty data + region change) inbox me, e.g. 2")
+    s.add_argument("--path", default=None)
+    s.add_argument("--entity", choices=["member_charges", "region_master"], default="member_charges")
 
     s = sub.add_parser("generate-large", help="Bada synthetic CSV (large-file demo)")
     s.add_argument("--rows", type=int, default=2_000_000)
@@ -198,10 +236,13 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.catalog:
         os.environ["UC_CATALOG"] = args.catalog  # config.yaml ${UC_CATALOG:workspace}
+    if args.warehouse_id:
+        os.environ["DATABRICKS_HTTP_PATH"] = f"/sql/1.0/warehouses/{args.warehouse_id}"
     cfg = load_config(args.env)
     log.info("env=%s command=%s", cfg.env, args.command)
     {
-        "setup": _cmd_setup, "ingest": _cmd_ingest, "generate-large": _cmd_generate_large,
+        "setup": _cmd_setup, "ingest": _cmd_ingest, "upload-inbox": _cmd_upload_inbox,
+        "generate-large": _cmd_generate_large,
         "run": _cmd_run, "reconcile": _cmd_reconcile, "dq-gate": _cmd_dq_gate, "dbt": _cmd_dbt,
         "maintenance": _cmd_maintenance, "show": _cmd_show, "reset": _cmd_reset,
     }[args.command](cfg, args)

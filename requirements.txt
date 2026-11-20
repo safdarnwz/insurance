@@ -18,3 +18,5 @@ kaggle>=1.6
 # Dev
 pytest>=8
 ruff>=0.5
+# Databricks bundle wheel build
+build>=1.2

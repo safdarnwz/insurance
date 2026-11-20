@@ -33,6 +33,9 @@ x-airflow-common: &airflow-common
     # (sirf PIPELINE_ENV=databricks me use hota hai)
     AIRFLOW_CONN_DATABRICKS_DEFAULT: '{"conn_type": "databricks", "host": "${DATABRICKS_HOST:-https://not-set}", "password": "${DATABRICKS_TOKEN:-not-set}"}'
     PIPELINE_ENV: ${PIPELINE_ENV:-local}
+    # Databricks CLI ka "direct" deploy engine: Terraform download nahi karta.
+    # (Terraform engine purane HashiCorp signing key ki wajah se "openpgp: key expired" deta hai.)
+    DATABRICKS_BUNDLE_ENGINE: direct
     SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-2g}
   volumes:
     - ./:/opt/project              # code + data + dbt live mount (VS Code edits turant)

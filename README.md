@@ -117,16 +117,29 @@ pytest -q -p no:logging
 
 ---
 
-## 3. Databricks Free Edition par (optional)
+## 3. Databricks Free Edition par (industry-standard, data lake on Databricks)
 
-Gmail/Google SSO se login wale accounts ke liye bhi same steps (password ki zaroorat nahi):
+Data Kaggle se nahi aata — file **Unity Catalog Volume `inbox`** (Databricks data lake) me drop hoti hai
+aur poora pipeline Databricks ke andar ek **Lakeflow Job** me chalta hai:
 
-1. Databricks → profile icon → **Settings → Developer → Access tokens → Generate new token**.
-2. **SQL Warehouses → Serverless Starter Warehouse → Connection details → HTTP path** copy.
-3. `.env` me: `PIPELINE_ENV=databricks`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `DATABRICKS_HTTP_PATH`.
-4. `docker compose up -d` → `docker compose exec dev databricks bundle deploy` → Airflow me DAG trigger.
+```
+inbox (UC Volume) -> ingest -> bronze (Auto Loader) -> reconcile -> silver -> dq_gate -> gold (dbt on SQL warehouse) -> report notebook
+                        └──────────────> Lakeflow Declarative Pipeline (expectations)
+```
 
-Poori detail + Free Edition limitations: [docs/DATABRICKS_FREE_EDITION.md](docs/DATABRICKS_FREE_EDITION.md).
+Free Edition ke features jo use hote hain: **Catalog** (schemas, volumes, tags, comments, lineage),
+**Data Ingestion** (Volume upload + Auto Loader), **Jobs & Pipelines** (Lakeflow Job + Lakeflow Declarative
+Pipeline), **Job Runs**, **Notebooks**, **SQL Warehouse**, **AI/BI Dashboard**.
+
+```bash
+# .env: PIPELINE_ENV=databricks, DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_HTTP_PATH (Google SSO users bhi token bana sakte hain)
+docker compose exec dev insurance-pipeline setup
+docker compose exec dev databricks bundle deploy --var warehouse_id=<warehouse-id>
+docker compose exec dev insurance-pipeline upload-inbox --sample          # ya Databricks UI se Volume me upload
+docker compose exec dev databricks bundle run insurance_medallion --var warehouse_id=<warehouse-id>
+```
+
+Poori architecture, feature map, decisions aur Free Edition limitations: **[docs/DATABRICKS_FREE_EDITION.md](docs/DATABRICKS_FREE_EDITION.md)**.
 
 ---
 
@@ -145,7 +158,20 @@ Poori detail + Free Edition limitations: [docs/DATABRICKS_FREE_EDITION.md](docs/
 | Large file | 500k rows → 3 parts; bronze 500,000 rows; reconcile OK |
 | pytest | 10 passed |
 
-Databricks target: `dbt parse --target databricks` pass; Databricks job/warehouse par actual run abhi test nahi hua (workspace access nahi tha).
+**Databricks Free Edition (real workspace par chala ke dekha):**
+
+| Step | Result |
+|---|---|
+| `databricks bundle deploy` | job `insurance-medallion-pipeline`, Lakeflow pipeline, AI/BI dashboard, maintenance job |
+| Run 1 (2026, inbox: Kaggle file) | 9/9 tasks SUCCESS; 1338 → 1337 silver; dbt 37/37 |
+| Run 2 (2027, inbox: synthetic batch) | 9/9 SUCCESS; 204 in, 6 quarantined, 3 duplicates, DQ gate 2.94%; dbt 37/37 |
+| SCD2 | southeast 2026 → Atlanta (364), 2027 → Miami (60) |
+| Lakeflow pipeline | bronze 1542 = silver 1536 + quarantine 6 |
+| Catalog | schema tags + table comments (dbt persist_docs) visible |
+| Dashboard | saari 7 dataset queries SQL warehouse par chalti hain |
+
+Airflow → Databricks trigger (`PIPELINE_ENV=databricks` DAG) parse/structure verified hai, par is test sandbox ke
+network ki wajah se Docker container se Databricks call nahi ho paayi – aapke laptop par pehli baar check karna.
 
 Insight (`agg_smoker_loading`): 18-24 age me smoker ka average charge non-smoker se **~7x**, 55-64 me ~2.75x.
 
@@ -164,8 +190,10 @@ Insight (`agg_smoker_loading`): 18-24 age me smoker ka average charge non-smoker
 │   ├── quality/                  dq_checks (rules), reconcile (manifest vs bronze), gate (circuit breaker)
 │   ├── utils/                    delta helpers (local path + Unity Catalog), audit, maintenance
 │   └── main.py                   CLI: insurance-pipeline
-├── databricks.yml + databricks/  Databricks Free Edition job (serverless)
-├── notebooks/                    Databricks analysis notebook
+├── databricks.yml                Asset Bundle: Lakeflow job, Lakeflow pipeline, AI/BI dashboard (serverless)
+├── pipelines/                    Lakeflow Declarative Pipeline (SQL, expectations)
+├── dashboards/                   AI/BI dashboard (.lvdash.json)
+├── notebooks/                    Databricks notebook (job ka report task + analysis)
 ├── tests/                        pytest: landing, transformations, e2e (Spark + dbt)
 ├── docs/                         ELT vs ETL, large files, file naming, Databricks setup
 ├── Dockerfile, docker-compose.yml, .devcontainer/, .vscode/

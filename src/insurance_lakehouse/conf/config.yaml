@@ -76,6 +76,7 @@ environments:
   local:
     table_mode: path          # Delta tables folder path se (local me metastore nahi)
     storage:
+      inbox: ./data/inbox            # source system yahan file drop karta hai
       landing: ./data/landing
       bronze: ./data/lakehouse/bronze
       silver: ./data/lakehouse/silver
@@ -95,6 +96,8 @@ environments:
     table_mode: catalog       # catalog.schema.table (UC managed Delta tables)
     catalog: ${UC_CATALOG:workspace}
     storage:
+      # Data lake on Databricks = Unity Catalog Volumes (governed cloud storage)
+      inbox: /Volumes/${UC_CATALOG:workspace}/insurance_landing/inbox      # drop zone
       landing: /Volumes/${UC_CATALOG:workspace}/insurance_landing/files
       checkpoints: /Volumes/${UC_CATALOG:workspace}/insurance_landing/checkpoints
     use_autoloader: true

@@ -23,3 +23,5 @@ build/
 .pytest_cache/
 .ruff_cache/
 dbt/.user.yml
+# dbt project copy for Databricks wheel (build time)
+src/insurance_lakehouse/_dbt_project/

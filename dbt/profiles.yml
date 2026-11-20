@@ -2,7 +2,8 @@
 # aate hain (.env file, jo git me nahi jaati).
 # KYA NAHI KARNA: token yahan paste karke commit mat karna.
 insurance_lakehouse:
-  target: "{{ env_var('DBT_TARGET', 'local') }}"
+  # Databricks job (dbt_task) ke andar DATABRICKS_RUNTIME_VERSION set hota hai -> databricks target
+  target: "{{ env_var('DBT_TARGET', 'databricks' if env_var('DATABRICKS_RUNTIME_VERSION', '') else 'local') }}"
   outputs:
     local:
       type: duckdb
@@ -20,8 +21,10 @@ insurance_lakehouse:
       type: databricks
       catalog: "{{ env_var('UC_CATALOG', 'workspace') }}"
       schema: insurance_gold
-      host: "{{ env_var('DATABRICKS_HOST', 'not-set') | replace('https://', '') | replace('/', '') }}"
+      # Laptop/Airflow se: .env ke DATABRICKS_HOST/TOKEN/HTTP_PATH.
+      # Databricks job (dbt_task) ke andar: Databricks khud DBT_* / DATABRICKS_* env deta hai.
+      host: "{{ env_var('DATABRICKS_HOST', env_var('DBT_HOST', 'not-set')) | replace('https://', '') | replace('/', '') }}"
       # SQL Warehouses -> Serverless Starter Warehouse -> Connection details -> HTTP path
-      http_path: "{{ env_var('DATABRICKS_HTTP_PATH', 'not-set') }}"
-      token: "{{ env_var('DATABRICKS_TOKEN', 'not-set') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH', env_var('DBT_HTTP_PATH', 'not-set')) }}"
+      token: "{{ env_var('DATABRICKS_TOKEN', env_var('DBT_ACCESS_TOKEN', 'not-set')) }}"
       threads: 4

@@ -35,7 +35,7 @@ from pyspark.sql import functions as F
 
 from ..config import PipelineConfig
 from ..schemas import CORRUPT_RECORD_COL, raw_schema
-from ..utils.delta_utils import start_stream
+from ..utils.delta_utils import read_table, start_stream, table_exists
 from ..utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -70,7 +70,16 @@ def _read_landing_stream(spark: SparkSession, cfg: PipelineConfig, source: str) 
 
     for k, v in opts.items():
         reader = reader.option(k, v)
-    return reader.schema(raw_schema(source)).load(cfg.landing_dir(source))
+
+    schema = raw_schema(source)
+    if cfg.use_autoloader:
+        # Auto Loader: user schema dene par partition columns (year=/month=/day=)
+        # bhi schema me hone chahiye, warna CF_MISSING_PARTITION_COLUMN_ERROR.
+        # (Local Spark file source inhe khud add karta hai.)
+        from pyspark.sql.types import StringType, StructField, StructType
+
+        schema = StructType(schema.fields + [StructField(c, StringType(), True) for c in ("year", "month", "day")])
+    return reader.schema(schema).load(cfg.landing_dir(source))
 
 
 def add_bronze_metadata(df: DataFrame) -> DataFrame:
@@ -93,11 +102,13 @@ def add_bronze_metadata(df: DataFrame) -> DataFrame:
 
 
 def _num_rows(progress) -> int:
-    # Local Spark: dict; Spark Connect (serverless): object - dono handle
+    # Local Spark: dict; Spark Connect (Databricks serverless): object, aur value
+    # None bhi ho sakti hai - teeno handle (warna "int + NoneType" crash).
     total = 0
     for p in progress or []:
-        total += p.get("numInputRows", 0) if isinstance(p, dict) else getattr(p, "numInputRows", 0)
-    return int(total)
+        n = p.get("numInputRows") if isinstance(p, dict) else getattr(p, "numInputRows", None)
+        total += int(n or 0)
+    return total
 
 
 def ingest_source(spark: SparkSession, cfg: PipelineConfig, source: str) -> int:
@@ -114,9 +125,15 @@ def ingest_source(spark: SparkSession, cfg: PipelineConfig, source: str) -> int:
         .trigger(availableNow=True)
         .queryName(f"bronze_{source}")
     )
+    before = read_table(spark, ref).count() if table_exists(spark, ref) else 0
     query = start_stream(writer, ref)
     query.awaitTermination()
-    rows = _num_rows(query.recentProgress)
+    # Row count Delta table se (count Delta stats se aata hai - TB par bhi sasta).
+    # KYUN: Databricks serverless (Spark Connect) par query.recentProgress aksar
+    # khaali/None hota hai -> progress par bharosa karke galat "0 rows" log hota.
+    rows = read_table(spark, ref).count() - before
+    if rows == 0:
+        rows = _num_rows(query.recentProgress)
     log.info("BRONZE %s: %d new rows appended", source, rows)
     return rows
 

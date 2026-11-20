@@ -19,7 +19,7 @@ jobs:
           distribution: temurin
           java-version: "17"
       - run: pip install -r requirements.txt && pip install -e .
-      - run: ruff check src tests airflow databricks
+      - run: ruff check src tests airflow
       - run: pytest -q -p no:logging
       - name: dbt parse (local + databricks targets)
         working-directory: dbt

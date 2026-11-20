@@ -202,3 +202,50 @@ def land_region_master(cfg: PipelineConfig, ingest_date: str, src: Path | None =
                        batch_id: str | None = None) -> dict:
     """Reference data. Real company me CRM/ERP se aata hai."""
     return land_file(cfg, "region_master", src or SAMPLE_DIR / "region_master.csv", ingest_date, batch_id)
+
+
+# =============================================================== drop zone (inbox)
+def _is_databricks() -> bool:
+    return "DATABRICKS_RUNTIME_VERSION" in os.environ
+
+
+def upload_to_inbox(cfg: PipelineConfig, source: str, src: str | Path) -> str:
+    """Source system ki tarah file inbox (drop zone) me rakho.
+    Databricks par ye kaam aap UI se bhi kar sakte ho: Catalog -> workspace ->
+    insurance_landing -> inbox volume -> Upload to this volume."""
+    src = Path(src)
+    target_dir = cfg.inbox_dir(source)
+    _upload(src, target_dir)
+    log.info("Inbox me file rakhi: %s/%s", target_dir, src.name)
+    return f"{target_dir}/{src.name}"
+
+
+def land_from_inbox(cfg: PipelineConfig, ingest_date: str) -> list[dict]:
+    """INBOX (drop zone) -> LANDING (standard naming + manifest) -> original _archive me.
+
+    Industry pattern (SFTP/drop-zone): source team kisi bhi naam se file daalti hai
+    ("Insurance Data FINAL.csv"); pipeline use standard naam deta hai, manifest
+    likhta hai, aur original ko _archive me move karta hai -> agli run me dobara
+    process nahi hoti (idempotent), aur original proof bhi safe rehta hai.
+
+    Databricks job ke andar /Volumes normal folder ki tarah dikhta hai (FUSE),
+    isliye yahi code laptop aur Databricks dono par chalta hai.
+    """
+    if _is_volume(cfg.storage["inbox"]) and not _is_databricks():
+        raise RuntimeError("Volume inbox ko Databricks job ke andar process karo (bundle task `ingest`)")
+    manifests = []
+    for source in cfg.sources:
+        inbox = Path(cfg.inbox_dir(source))
+        files = sorted(p for p in inbox.glob("*.csv") if p.is_file()) if inbox.exists() else []
+        if not files:
+            log.info("INBOX %s: koi nayi file nahi", source)
+            continue
+        archive = Path(cfg.storage["inbox"]) / "_archive" / cfg.sources[source]["source_system"] \
+            / cfg.sources[source]["entity"] / ingest_date
+        archive.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            manifests.append(land_file(cfg, source, f, ingest_date))
+            # Move SIRF successful landing ke baad - fail hua to file inbox me rahegi, retry par dobara
+            shutil.move(str(f), str(archive / f.name))
+            log.info("INBOX %s: %s -> landed + archived", source, f.name)
+    return manifests

@@ -23,7 +23,8 @@ where = ["src"]
 
 # config.yaml wheel me shamil ho (Databricks job ko chahiye)
 [tool.setuptools.package-data]
-insurance_lakehouse = ["conf/*.yaml"]
+# conf: config.yaml | _dbt_project: dbt project ki copy (sirf Databricks wheel build me)
+insurance_lakehouse = ["conf/*.yaml", "_dbt_project/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -41,13 +41,41 @@ aur poora pipeline Databricks ke andar chalta hai. Free Edition ke saare main fe
 | **Catalog** (Unity Catalog) | 7 schemas, 4 volumes, managed Delta tables, schema **tags** + **comments**, table/column descriptions (dbt `persist_docs`), automatic **lineage** | Catalog → `workspace` → `insurance_gold` → `fact_member_charges` → *Lineage* tab |
 | **Data Ingestion** | Volume `inbox` me file upload (drop zone) + **Auto Loader** (`cloudFiles`) | Catalog → `insurance_landing` → `inbox` → *Upload to this volume* |
 | **Jobs & Pipelines → Jobs** | `insurance-medallion-pipeline` (9 tasks), `insurance-maintenance` (weekly OPTIMIZE/VACUUM) | Jobs & Pipelines |
-| **Jobs & Pipelines → Pipelines** | `insurance-lakeflow-pipeline` (Lakeflow Declarative / DLT, expectations, materialized view) | Pipeline graph + *Data quality* tab |
+| **Jobs & Pipelines → Pipelines** | `insurance-lakeflow-pipeline`: poora medallion (13 tables) — expectations, quarantine, APPLY CHANGES SCD1 + SCD2, gold materialized views | Pipeline graph + *Data quality* tab |
 | **Job Runs** | Har run ka task graph, duration, logs, retries; file-arrival trigger | Jobs & Pipelines → *Job runs* |
 | **Notebooks** | `notebooks/insurance_analysis.py` — job ka last task (report) + interactive analysis | Workspace → `.bundle/insurance_lakehouse/dev/files/notebooks` |
 | **SQL Warehouses / SQL Editor** | dbt gold isi par chalta hai (Serverless Starter Warehouse); ad-hoc queries | SQL Editor: `select * from workspace.insurance_gold.agg_region_risk` |
 | **Dashboards** (AI/BI) | "Insurance Lakehouse - Overview": KPIs, region, smoker loading, BMI x smoker, risk segment, yearly | Dashboards |
 
-## 3. Kyun aise (industry standard decisions)
+## 3. Do pipelines — same data, same answer
+
+| | **Python framework + dbt** (job tasks) | **Lakeflow Declarative Pipeline** (`pipelines/insurance_lakeflow.sql`) |
+|---|---|---|
+| Bronze | Auto Loader `cloudFiles` (PySpark) | `STREAM read_files(...)` |
+| Silver DQ | Rules-as-data framework + quarantine table | `CONSTRAINT ... EXPECT ... ON VIOLATION DROP ROW` + quarantine table |
+| Dedupe | `foreachBatch` + `MERGE` | `APPLY CHANGES ... STORED AS SCD TYPE 1` |
+| SCD2 (region) | dbt snapshot | `APPLY CHANGES ... STORED AS SCD TYPE 2 TRACK HISTORY ON ...` |
+| Gold | dbt models (incremental fact) + 28 tests | Materialized views + gold expectations (`FAIL UPDATE`) |
+| Monitoring | audit tables + job runs | Pipeline graph + *Data quality* tab (built-in) |
+| Kahan chalta hai | Laptop, Docker, Databricks, koi bhi Spark | Sirf Databricks |
+| Schema | `insurance_bronze/silver/gold` | `insurance_lakeflow` |
+
+**Verified (real run):** dono ke gold me 1532 facts, total charges 20,940,281.43, smoker loading factors same,
+SCD2 same (southeast 2026 → Atlanta, 2027 → Miami). Lakeflow: bronze 1542 = silver 1536 + quarantine 6; dedupe → 1532.
+
+Company me aksar EK approach chuni jaati hai: multi-cloud / portable / heavy custom logic → Python + dbt;
+Databricks-only team, kam code, built-in DQ monitoring → Lakeflow. Interview me dono ka trade-off batana aana chahiye.
+
+## 4. CI/CD pipeline (GitHub Actions → Databricks)
+
+* `.github/workflows/ci.yml` — har push/PR: lint + pytest (Spark + dbt e2e) + dbt parse.
+* `.github/workflows/deploy-databricks.yml` — manual (*Actions → deploy-databricks → Run workflow*):
+  tests → `insurance-pipeline setup` → `bundle validate` → `bundle deploy` → (optional) job run.
+* GitHub repo → *Settings → Secrets and variables → Actions*:
+  secrets `DATABRICKS_HOST`, `DATABRICKS_TOKEN`; variable `DATABRICKS_WAREHOUSE_ID`.
+* Production standard: PAT ki jagah **service principal (OAuth M2M)**; Free Edition me account console nahi, isliye PAT.
+
+## 5. Kyun aise (industry standard decisions)
 
 | Decision | Kyun | Kya NAHI karna |
 |---|---|---|
@@ -62,7 +90,7 @@ aur poora pipeline Databricks ke andar chalta hai. Free Edition ke saare main fe
 | **Auth inside job = runtime identity** | dbt ko token Databricks SDK runtime se milta hai | Job parameters / code me PAT |
 | **Asset Bundle** (`databricks.yml`) | Jobs, pipeline, dashboard sab code me, git review | UI me click-ops |
 
-## 4. Setup (aapke laptop / Docker se) — ek baar
+## 6. Setup (aapke laptop / Docker se) — ek baar
 
 1. **Token** (Google/Gmail SSO users bhi): profile icon → *Settings* → *Developer* → *Access tokens* → *Generate new token*.
 2. **SQL warehouse id**: *SQL Warehouses* → *Serverless Starter Warehouse* → URL / *Connection details* (HTTP path ka last part).
@@ -85,7 +113,7 @@ aur poora pipeline Databricks ke andar chalta hai. Free Edition ke saare main fe
 5. Agla saal / naya data: `insurance-pipeline upload-inbox --synthetic-batch 2` (ya apni CSV UI se `inbox/kaggle/member_charges/` me) → job run.
 6. Automatic chahiye: Job → *Triggers* → file arrival **Unpause** (ya Airflow DAG unpause — dono nahi).
 
-## 5. Free Edition limitations jo code me handle ki hain
+## 7. Free Edition limitations jo code me handle ki hain
 
 | Limitation / issue | Handling |
 |---|---|
@@ -101,7 +129,7 @@ aur poora pipeline Databricks ke andar chalta hai. Free Edition ke saare main fe
 | ANSI mode ON | `try_cast`, `nullif` |
 | Daily compute quota | `availableNow` (stream chal ke ruk jaata hai) |
 
-## 6. Kya NAHI karna
+## 8. Kya NAHI karna
 
 * Token sirf `.env` me. Chat, code, notebook, screenshot me kabhi nahi. Leak ho to turant revoke.
 * File-arrival trigger **aur** Airflow schedule dono ON mat karo – double runs.

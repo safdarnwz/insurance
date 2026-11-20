@@ -124,7 +124,7 @@ aur poora pipeline Databricks ke andar ek **Lakeflow Job** me chalta hai:
 
 ```
 inbox (UC Volume) -> ingest -> bronze (Auto Loader) -> reconcile -> silver -> dq_gate -> gold (dbt on SQL warehouse) -> report notebook
-                        └──────────────> Lakeflow Declarative Pipeline (expectations)
+                        └──────────────> Lakeflow Declarative Pipeline: bronze -> silver (expectations) -> SCD1/SCD2 (APPLY CHANGES) -> gold MVs
 ```
 
 Free Edition ke features jo use hote hain: **Catalog** (schemas, volumes, tags, comments, lineage),
@@ -166,7 +166,8 @@ Poori architecture, feature map, decisions aur Free Edition limitations: **[docs
 | Run 1 (2026, inbox: Kaggle file) | 9/9 tasks SUCCESS; 1338 → 1337 silver; dbt 37/37 |
 | Run 2 (2027, inbox: synthetic batch) | 9/9 SUCCESS; 204 in, 6 quarantined, 3 duplicates, DQ gate 2.94%; dbt 37/37 |
 | SCD2 | southeast 2026 → Atlanta (364), 2027 → Miami (60) |
-| Lakeflow pipeline | bronze 1542 = silver 1536 + quarantine 6 |
+| Lakeflow pipeline (13 tables) | bronze 1542 = silver 1536 + quarantine 6 → dedupe 1532; gold = dbt gold (1532 facts, same total charges, same SCD2) |
+| CI/CD | `deploy-databricks.yml` (GitHub Actions) — workflow file likhi hai, GitHub par abhi chalaayi nahi |
 | Catalog | schema tags + table comments (dbt persist_docs) visible |
 | Dashboard | saari 7 dataset queries SQL warehouse par chalti hain |
 

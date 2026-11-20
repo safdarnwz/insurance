@@ -70,21 +70,27 @@ display(spark.sql("DESCRIBE HISTORY insurance_silver.member_charges"))
 
 # COMMAND ----------
 
-# MAGIC %md ## 6. Lakeflow Declarative Pipeline (DLT) - expectations ka result
-# MAGIC Same landing data, Databricks-native pipeline (`insurance_lakeflow` schema).
-# MAGIC Jobs & Pipelines -> insurance-lakeflow-pipeline -> table click -> **Data quality** tab me har expectation ke pass/fail counts.
+# MAGIC %md ## 6. Lakeflow Declarative Pipeline vs Python+dbt - same answer?
+# MAGIC `insurance_lakeflow` schema = Databricks-native pipeline (expectations, APPLY CHANGES SCD1/SCD2, materialized views).
+# MAGIC Jobs & Pipelines -> insurance-lakeflow-pipeline -> table click -> **Data quality** tab.
 
 # COMMAND ----------
 
 display(spark.sql("""
-  SELECT 'bronze' AS layer, count(*) AS rows FROM insurance_lakeflow.member_charges_bronze
+  SELECT 'bronze' AS step, count(*) AS rows FROM insurance_lakeflow.member_charges_bronze
   UNION ALL SELECT 'silver (expectations pass)', count(*) FROM insurance_lakeflow.member_charges_silver
   UNION ALL SELECT 'quarantine (expectations fail)', count(*) FROM insurance_lakeflow.member_charges_quarantine
+  UNION ALL SELECT 'deduplicated (APPLY CHANGES SCD1)', count(*) FROM insurance_lakeflow.member_charges
 """))
 
 # COMMAND ----------
 
-display(spark.table("insurance_lakeflow.charges_by_region_smoker").orderBy("region", "smoker_status"))
+# Reconciliation: dono pipelines ka gold same hona chahiye
+display(spark.sql("""
+  SELECT 'lakeflow' AS pipeline, count(*) AS facts, sum(charges) AS total_charges FROM insurance_lakeflow.fact_member_charges
+  UNION ALL
+  SELECT 'python + dbt', count(*), sum(charges) FROM insurance_gold.fact_member_charges
+"""))
 
 # COMMAND ----------
 

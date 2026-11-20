@@ -1,0 +1,70 @@
+# =============================================================================
+# CD: GitHub -> Databricks Free Edition deploy (Asset Bundle)
+# -----------------------------------------------------------------------------
+# Actions tab -> "deploy-databricks" -> Run workflow (manual).
+# One-time GitHub setup (repo -> Settings -> Secrets and variables -> Actions):
+#   Secrets:   DATABRICKS_HOST   (https://<workspace>.cloud.databricks.com)
+#              DATABRICKS_TOKEN  (personal access token)
+#   Variables: DATABRICKS_WAREHOUSE_ID (SQL warehouse id)
+#
+# KYUN CD pipeline: laptop se deploy = "kisne kya deploy kiya" ka record nahi.
+# GitHub Actions se har deploy ek commit se juda hota hai (audit + rollback).
+# Company standard: token ki jagah service principal (OAuth M2M) - Free Edition
+# me account console nahi hai, isliye yahan PAT.
+# KYA NAHI KARNA: token workflow file me likhna - hamesha secrets me.
+# =============================================================================
+name: deploy-databricks
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_job:
+        description: "Deploy ke baad medallion job chalana hai?"
+        type: boolean
+        default: false
+  # Auto-deploy chahiye (main par merge = deploy) to ye uncomment karo:
+  # push:
+  #   branches: [main]
+
+# Ek time par ek hi deploy (do deploys ek saath = state conflict)
+concurrency: databricks-deploy
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - run: pip install -r requirements.txt && pip install -e .
+      - run: ruff check src tests airflow
+      - run: pytest -q -p no:logging
+
+  deploy:
+    needs: test   # tests fail = deploy nahi
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_HTTP_PATH: /sql/1.0/warehouses/${{ vars.DATABRICKS_WAREHOUSE_ID }}
+      DATABRICKS_BUNDLE_ENGINE: direct
+      PIPELINE_ENV: databricks
+      UC_CATALOG: workspace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      # Version pinned (tag na mile to @main use karo)
+      - uses: databricks/setup-cli@v0.278.0
+      - run: pip install -r requirements.txt && pip install -e .
+      - name: Setup (schemas, volumes, tags)
+        run: insurance-pipeline setup
+      - name: Bundle validate
+        run: databricks bundle validate --var warehouse_id=${{ vars.DATABRICKS_WAREHOUSE_ID }}
+      - name: Bundle deploy (job + Lakeflow pipeline + dashboard)
+        run: databricks bundle deploy --var warehouse_id=${{ vars.DATABRICKS_WAREHOUSE_ID }}
+      - name: Run medallion job
+        if: ${{ inputs.run_job }}
+        run: databricks bundle run insurance_medallion --var warehouse_id=${{ vars.DATABRICKS_WAREHOUSE_ID }}
